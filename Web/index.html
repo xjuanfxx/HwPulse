@@ -1,0 +1,450 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#000000">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="icon" href="/icon.png">
+<link rel="apple-touch-icon" href="/icon.png">
+<title>HwPulse</title>
+<style>
+  @font-face { font-family: Inter; src: url(/fonts/Inter-Medium.ttf) format("truetype"); font-weight: 500; font-display: swap; }
+  @font-face { font-family: Inter; src: url(/fonts/Inter-SemiBold.ttf) format("truetype"); font-weight: 600; font-display: swap; }
+  @font-face { font-family: Inter; src: url(/fonts/Inter-Bold.ttf) format("truetype"); font-weight: 700; font-display: swap; }
+
+  :root {
+    --bg: #000; --panel: #0d0d0d; --line: #1f1f1f; --track: #1c1c1c;
+    --text: #f5f5f5; --muted: #a3a3a3; --faint: #666;
+    --cpu: #5b9bd5; --gpu: #6cc287; --mem: #9c8bd0; --disk: #8a939e;
+    --warn: #e0a84a; --hot: #e5584f;
+    --gap: clamp(10px, 1.4vw, 18px); --r: 18px;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { background: var(--bg); color: var(--text); overflow-x: hidden; }
+  body {
+    font: 500 14px/1.35 Inter, system-ui, sans-serif;
+    font-variant-numeric: tabular-nums;
+    -webkit-font-smoothing: antialiased;
+    padding: max(var(--gap), env(safe-area-inset-top)) max(var(--gap), env(safe-area-inset-right)) var(--gap) max(var(--gap), env(safe-area-inset-left));
+    min-height: 100vh;
+  }
+
+  header { display: flex; align-items: center; gap: 12px; margin-bottom: var(--gap); padding: 0 4px; }
+  .brand { display: flex; align-items: center; gap: 10px; font-weight: 700; font-size: 16px; }
+  .brand svg { width: 22px; height: 22px; }
+  header .spacer { flex: 1; }
+  .live { display: flex; align-items: center; gap: 8px; color: var(--muted); font-weight: 600; font-size: 13px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--gpu); box-shadow: 0 0 0 0 rgba(108,194,135,.6); }
+  .dot.off { background: var(--hot); }
+  .iconbtn { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 10px; width: 34px; height: 34px;
+             display: grid; place-items: center; cursor: pointer; }
+  .iconbtn:hover { color: var(--text); border-color: #333; }
+  .iconbtn svg { width: 16px; height: 16px; }
+
+  .status { display: none; margin: 0 0 var(--gap); padding: 10px 14px; border-radius: 12px; background: var(--panel);
+            border: 1px solid var(--line); border-left: 3px solid var(--warn); color: var(--text); font-size: 13px; }
+  .status.show { display: block; }
+  .status.hot { border-left-color: var(--hot); }
+
+  .grid { display: grid; gap: var(--gap); grid-template-columns: repeat(12, minmax(0, 1fr)); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: clamp(14px, 1.6vw, 22px);
+          min-width: 0; display: flex; flex-direction: column; }
+  .span4 { grid-column: span 4; } .span6 { grid-column: span 6; } .span12 { grid-column: span 12; }
+  .title { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 13px; letter-spacing: .02em; }
+  .title .sub { color: var(--faint); font-weight: 500; margin-left: auto; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60%; }
+  .swatch { width: 8px; height: 8px; border-radius: 2px; }
+  .micro { font-size: 10.5px; font-weight: 700; letter-spacing: .08em; color: var(--faint); text-transform: uppercase; }
+
+  /* ---------- Anillos (estilo pantalla AIO) ---------- */
+  .gauge { position: relative; width: min(100%, 300px); aspect-ratio: 1; margin: 14px auto 6px; }
+  .gauge svg { width: 100%; height: 100%; transform: rotate(135deg); }
+  .gauge circle { fill: none; stroke-width: 9; stroke-linecap: round; }
+  .gauge .track { stroke: var(--track); }
+  .gauge .arc { transition: stroke-dasharray .7s cubic-bezier(.2,.8,.2,1); }
+  .gauge .center { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
+  .gauge .temp { font-weight: 700; font-size: clamp(44px, 6.2vw, 74px); line-height: 1; letter-spacing: -.02em; }
+  .gauge .temp small { font-size: .38em; font-weight: 600; color: var(--muted); margin-left: 2px; vertical-align: top; position: relative; top: .3em; }
+  .gauge .load { margin-top: 8px; font-weight: 600; font-size: clamp(14px, 1.5vw, 17px); color: var(--muted); }
+  .gauge .load b { color: var(--text); font-weight: 700; }
+  .stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--line); }
+  .stat { text-align: center; padding-top: 10px; }
+  .stat .micro, .stat .v, .net .v, .net .micro, .bar .head .v { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .stat .v { font-weight: 700; font-size: clamp(15px, 1.5vw, 18px); white-space: nowrap; }
+  .stat .v small { font-size: .7em; color: var(--muted); font-weight: 600; margin-left: 2px; }
+
+  /* ---------- FPS ---------- */
+  .fps { display: flex; flex-direction: column; flex: 1; }
+  .fps .big { font-weight: 700; font-size: clamp(72px, 10vw, 132px); line-height: .95; letter-spacing: -.04em; margin-top: 14px; }
+  .fps .big.none { color: #2a2a2a; }
+  .fps .row { display: flex; justify-content: space-between; align-items: baseline; margin-top: 10px; }
+  .fps .ft { font-weight: 700; font-size: clamp(18px, 2vw, 24px); }
+  .fps .ft small { font-size: .6em; color: var(--muted); }
+  .fps .proc { color: var(--faint); font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 60%; }
+  canvas.spark { width: 100%; height: 70px; margin-top: auto; display: block; }
+
+  /* ---------- Barras ---------- */
+  .bars { display: flex; flex-direction: column; gap: 16px; margin-top: 16px; }
+  .bar .head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 7px; }
+  .bar .head .v { font-weight: 700; font-size: 16px; }
+  .bar .head .v small { color: var(--muted); font-weight: 600; font-size: 12px; margin-left: 3px; }
+  .track { height: 8px; border-radius: 4px; background: var(--track); overflow: hidden; }
+  .fill { height: 100%; border-radius: 4px; width: 0; transition: width .7s cubic-bezier(.2,.8,.2,1); }
+
+  /* ---------- Listas clave/valor ---------- */
+  .kv { display: grid; grid-template-columns: 1fr auto; row-gap: 11px; column-gap: 12px; margin-top: 16px; }
+  .kv .k { color: var(--muted); font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .kv .v { font-weight: 700; text-align: right; white-space: nowrap; }
+  .kv .sep { grid-column: 1 / -1; height: 1px; background: var(--line); }
+
+  .net { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 16px; }
+  .net .v { font-weight: 700; font-size: clamp(22px, 2.4vw, 30px); white-space: nowrap; }
+  .net .v small { font-size: .5em; color: var(--muted); font-weight: 600; margin-left: 3px; }
+
+  /* ---------- Núcleos ---------- */
+  .cores { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-top: 16px; }
+  .core { border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  .core .top { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; font-weight: 600; }
+  .core .clk { font-weight: 700; font-size: 18px; margin: 4px 0 8px; }
+
+  .ph { color: #3a3a3a; font-size: .45em; font-weight: 600; vertical-align: middle; }
+  .temp-ok { color: var(--text); } .temp-warn { color: var(--warn); } .temp-hot { color: var(--hot); }
+
+  /* ================= Modo compacto (horizontal, pantalla baja) =================
+     Todo en una sola pantalla: los anillos de CPU y GPU ocupan dos filas y el resto se reparte en una
+     cuadrícula de 2×2. Los tamaños dependen del alto de la pantalla (dvh) para que quepa sin desplazarse. */
+  body.compact { padding: max(8px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right)) 8px max(10px, env(safe-area-inset-left)); min-height: 0; height: 100dvh; overflow: hidden; }
+  .compact header { margin-bottom: 8px; height: 30px; }
+  .compact .brand { font-size: 14px; } .compact .brand svg { width: 18px; height: 18px; }
+  .compact .iconbtn { width: 30px; height: 30px; border-radius: 8px; }
+  .compact .status { display: none !important; }
+  .compact main.grid {
+    --g: clamp(6px, 1.2vw, 12px); gap: var(--g);
+    height: calc(100dvh - 30px - 8px - 16px - env(safe-area-inset-top));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-rows: repeat(2, minmax(0, 1fr));
+    grid-template-areas: "cpu gpu fps mem" "cpu gpu net pwr";
+  }
+  .compact .card { grid-column: auto; padding: clamp(8px, 1.6dvh, 16px) clamp(10px, 1.4vw, 16px); border-radius: 14px; overflow: hidden; }
+  .compact .a-cpu { grid-area: cpu; } .compact .a-gpu { grid-area: gpu; } .compact .a-fps { grid-area: fps; }
+  .compact .a-mem { grid-area: mem; } .compact .a-net { grid-area: net; } .compact .a-pwr { grid-area: pwr; }
+  .compact .a-cores, .compact #drives, .compact .disk { display: none; }
+  .compact .title { font-size: 12px; }
+  .compact .title .sub { font-size: 11px; }
+  .compact .micro { font-size: 9.5px; }
+  .compact .gauge { width: min(100%, 58dvh); margin: auto; }
+  .compact .gauge circle { stroke-width: 8; }
+  .compact .gauge .temp { font-size: clamp(22px, min(10dvh, 10vw), 70px); }
+  .compact .gauge .load { margin-top: 2px; font-size: clamp(10px, min(2.6dvh, 3vw), 16px); }
+  .compact .stats { margin-top: 0; padding-top: 4px; gap: 4px; }
+  .compact .stat { padding-top: 4px; }
+  .compact .stat .v { font-size: clamp(11px, min(2.8dvh, 2.6vw), 17px); }
+  .compact .fps .big { font-size: clamp(34px, min(15dvh, 16vw), 110px); margin-top: 2px; }
+  .compact .fps .row { margin-top: 2px; }
+  .compact .fps .ft { font-size: clamp(13px, 3dvh, 20px); }
+  .compact canvas.spark { height: clamp(18px, 7dvh, 56px); margin-top: auto; }
+  .compact .bars { gap: clamp(6px, 1.6dvh, 14px); margin-top: auto; margin-bottom: auto; }
+  .compact .bar .head { margin-bottom: 4px; }
+  .compact .bar .head .v { font-size: clamp(12px, 2.8dvh, 16px); }
+  .compact .track { height: clamp(5px, 1.2dvh, 8px); }
+  .compact .net { margin-top: 6px; gap: 6px; }
+  .compact .net .v { font-size: clamp(14px, min(4.2dvh, 4.6vw), 28px); }
+  .compact .kv { margin-top: auto; margin-bottom: auto; row-gap: clamp(4px, 1.4dvh, 10px); font-size: clamp(11px, min(2.6dvh, 3vw), 14px); grid-template-columns: minmax(0, 1fr) auto; }
+
+  /* Compacto en vertical (teléfono de pie): 2 columnas × 3 filas */
+  @media (orientation: portrait) {
+    .compact main.grid { grid-template-columns: repeat(2, minmax(0, 1fr)); grid-template-rows: 1.25fr 1fr 1fr;
+                         grid-template-areas: "cpu gpu" "fps mem" "net pwr"; }
+    .compact .gauge { width: min(100%, 26dvh); }
+  }
+  /* Tablet acostada (más alto): 3 columnas, anillos y FPS arriba; memoria, red y energía abajo */
+  @media (min-height: 600px) and (orientation: landscape) {
+    .compact main.grid { grid-template-columns: repeat(3, minmax(0, 1fr)); grid-template-rows: 1.5fr 1fr;
+                         grid-template-areas: "cpu gpu fps" "mem net pwr"; }
+    .compact .gauge { width: min(100%, 42dvh); }
+    .compact .fps .big { font-size: clamp(60px, 13dvh, 130px); }
+  }
+  @media (max-width: 1100px) { .span4 { grid-column: span 6; } }
+  @media (max-width: 680px)  { .span4, .span6 { grid-column: span 12; } :root { --r: 16px; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">
+    <svg viewBox="0 0 16 16" fill="none" stroke="#5b9bd5" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 8.6h3.2L6 3.6 9.4 12.6 11.2 8.6H15"/></svg>
+    HwPulse
+  </div>
+  <div class="spacer"></div>
+  <div class="live"><span class="dot" id="dot"></span><span id="clock">—</span></div>
+  <button class="iconbtn" id="layout" title="Layout" aria-label="Layout">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="1.5" y="3" width="13" height="10" rx="2"/><path d="M6 3v10M6 8h8.5"/></svg>
+  </button>
+  <button class="iconbtn" id="fs" title="Fullscreen" aria-label="Fullscreen">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M2 6V2h4M10 2h4v4M14 10v4h-4M6 14H2v-4"/></svg>
+  </button>
+</header>
+
+<div class="status" id="status"></div>
+
+<main class="grid">
+  <!-- CPU -->
+  <section class="card span4 a-cpu">
+    <div class="title"><span class="swatch" style="background:var(--cpu)"></span>CPU<span class="sub" id="cpuName"></span></div>
+    <div class="gauge">
+      <svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="52"/><circle class="arc" id="cpuArc" cx="60" cy="60" r="52" stroke="var(--cpu)"/></svg>
+      <div class="center"><div class="temp" id="cpuTemp">—</div><div class="load"><b id="cpuLoad">—</b> <span data-t="usage"></span></div></div>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="micro" data-t="clock"></div><div class="v" id="cpuClock">—</div></div>
+      <div class="stat"><div class="micro" data-t="power"></div><div class="v" id="cpuPower">—</div></div>
+      <div class="stat"><div class="micro" data-t="pkg"></div><div class="v" id="cpuPkg">—</div></div>
+    </div>
+  </section>
+
+  <!-- GPU -->
+  <section class="card span4 a-gpu">
+    <div class="title"><span class="swatch" style="background:var(--gpu)"></span>GPU<span class="sub" id="gpuName"></span></div>
+    <div class="gauge">
+      <svg viewBox="0 0 120 120"><circle class="track" cx="60" cy="60" r="52"/><circle class="arc" id="gpuArc" cx="60" cy="60" r="52" stroke="var(--gpu)"/></svg>
+      <div class="center"><div class="temp" id="gpuTemp">—</div><div class="load"><b id="gpuLoad">—</b> <span data-t="usage"></span></div></div>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="micro" data-t="clock"></div><div class="v" id="gpuClock">—</div></div>
+      <div class="stat"><div class="micro" data-t="power"></div><div class="v" id="gpuPower">—</div></div>
+      <div class="stat"><div class="micro" data-t="hotspot"></div><div class="v" id="gpuHot">—</div></div>
+    </div>
+  </section>
+
+  <!-- FPS -->
+  <section class="card span4 a-fps">
+    <div class="title"><span class="swatch" style="background:var(--text)"></span>FPS<span class="sub" id="fpsProc"></span></div>
+    <div class="fps">
+      <div class="big none" id="fps">—</div>
+      <div class="row"><span class="micro" data-t="frametime"></span><span class="ft" id="ft">—</span></div>
+      <canvas class="spark" id="fpsSpark"></canvas>
+    </div>
+  </section>
+
+  <!-- Memoria -->
+  <section class="card span4 a-mem">
+    <div class="title"><span class="swatch" style="background:var(--mem)"></span><span data-t="memory"></span></div>
+    <div class="bars">
+      <div class="bar"><div class="head"><span class="micro">RAM</span><span class="v" id="ramV">—</span></div><div class="track"><div class="fill" id="ramF" style="background:var(--mem)"></div></div></div>
+      <div class="bar"><div class="head"><span class="micro">VRAM</span><span class="v" id="vramV">—</span></div><div class="track"><div class="fill" id="vramF" style="background:var(--mem)"></div></div></div>
+    </div>
+    <div class="bars" id="drives"></div>
+  </section>
+
+  <!-- Red -->
+  <section class="card span4 a-net">
+    <div class="title"><span class="swatch" style="background:var(--cpu)"></span><span data-t="network"></span></div>
+    <div class="net">
+      <div><div class="micro" data-t="down"></div><div class="v" id="down">—</div></div>
+      <div><div class="micro" data-t="up"></div><div class="v" id="up">—</div></div>
+    </div>
+    <canvas class="spark" id="netSpark"></canvas>
+  </section>
+
+  <!-- Energía y discos -->
+  <section class="card span4 a-pwr">
+    <div class="title"><span class="swatch" style="background:var(--warn)"></span><span data-t="powerSection"></span></div>
+    <div class="kv" id="power"></div>
+  </section>
+
+  <!-- Núcleos -->
+  <section class="card span12 a-cores">
+    <div class="title"><span class="swatch" style="background:var(--cpu)"></span><span data-t="cores"></span></div>
+    <div class="cores" id="cores"></div>
+  </section>
+</main>
+
+<script>
+const T = {
+  en: { usage: "usage", clock: "Clock", power: "Power", pkg: "Package", hotspot: "Hotspot", frametime: "Frametime", memory: "Memory",
+        network: "Network", down: "Download", up: "Upload", powerSection: "Power & storage", cores: "Cores", source: "Source",
+        ac: "AC", battery: "Battery", total: "CPU + GPU", core: "Core", noGame: "no game in focus", offline: "Disconnected",
+        used: "used" },
+  es: { usage: "uso", clock: "Reloj", power: "Potencia", pkg: "Paquete", hotspot: "Hotspot", frametime: "Frametime", memory: "Memoria",
+        network: "Red", down: "Descarga", up: "Subida", powerSection: "Energía y discos", cores: "Núcleos", source: "Fuente",
+        ac: "Corriente", battery: "Batería", total: "CPU + GPU", core: "Núcleo", noGame: "sin juego en primer plano", offline: "Desconectado",
+        used: "ocupado" },
+};
+let lang = "en";
+const t = k => (T[lang] || T.en)[k] || k;
+const $ = id => document.getElementById(id);
+const C = 2 * Math.PI * 52, SPAN = 0.75;          // el anillo abarca 270°
+const fpsHist = [], downHist = [], upHist = [];
+
+function applyLang() {
+  document.documentElement.lang = lang;
+  document.querySelectorAll("[data-t]").forEach(el => el.textContent = t(el.dataset.t));
+}
+const esc = s => String(s ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+const n = (v, d = 0) => v == null ? null : Number(v).toFixed(d);
+const unit = (v, u) => v == null ? "—" : `${v}<small>${u}</small>`;
+const div = (v, d) => v == null ? null : v / d;
+function tempClass(v) { return v == null ? "temp-ok" : v >= 90 ? "temp-hot" : v >= 78 ? "temp-warn" : "temp-ok"; }
+function rate(b) {
+  if (b == null) return "—";
+  if (b >= 1048576) return unit((b / 1048576).toFixed(1), "MB/s");
+  if (b >= 1024) return unit((b / 1024).toFixed(0), "KB/s");
+  return unit(b.toFixed(0), "B/s");
+}
+function setArc(id, pct) {
+  const p = Math.max(0, Math.min(100, pct ?? 0)) / 100;
+  const el = $(id);
+  el.style.strokeDasharray = `${C * SPAN * p} ${C}`;
+  el.style.opacity = p < 0.005 ? 0 : 1;          // en 0 % el extremo redondeado dejaría un punto
+}
+// Fondo del medidor: 270° con la abertura abajo
+document.querySelectorAll(".gauge .track").forEach(t => t.style.strokeDasharray = `${C * SPAN} ${C}`);
+const PH = `<span class="ph">—</span>`;           // "sin dato": guion pequeño y gris
+function setTemp(id, v) {
+  const el = $(id);
+  el.className = "temp " + tempClass(v);
+  el.innerHTML = v == null ? PH : `${Math.round(v)}<small>°C</small>`;
+}
+function push(arr, v, max = 60) { arr.push(v ?? 0); if (arr.length > max) arr.shift(); }
+
+function spark(canvas, series, colors) {
+  const dpr = window.devicePixelRatio || 1, w = canvas.clientWidth, h = canvas.clientHeight;
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
+  const g = canvas.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  if (series.flat().every(v => !v)) return;      // sin datos: nada de línea plana
+  const max = Math.max(1, ...series.flat()) * 1.15;
+  series.forEach((s, i) => {
+    if (s.length < 2) return;
+    const step = w / (s.length - 1);
+    const y = v => h - 2 - (v / max) * (h - 4);
+    g.beginPath();
+    s.forEach((v, j) => j ? g.lineTo(j * step, y(v)) : g.moveTo(0, y(v)));
+    g.strokeStyle = colors[i]; g.lineWidth = 2; g.lineJoin = "round"; g.stroke();
+    g.lineTo(w, h); g.lineTo(0, h); g.closePath();
+    const grad = g.createLinearGradient(0, 0, 0, h);
+    grad.addColorStop(0, colors[i] + "40"); grad.addColorStop(1, colors[i] + "00");
+    g.fillStyle = grad; g.fill();
+  });
+}
+
+function render(d) {
+  if (d.lang && d.lang !== lang) { lang = d.lang; applyLang(); }
+  // Colores de la marca del CPU y la GPU (Intel azul, AMD rojo, NVIDIA verde), los mismos que en la app
+  if (d.colors) {
+    const root = document.documentElement.style;
+    if (d.colors.cpu) root.setProperty("--cpu", d.colors.cpu);
+    if (d.colors.gpu) root.setProperty("--gpu", d.colors.gpu);
+  }
+  $("clock").textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+  const st = $("status");
+  st.textContent = d.status || "";
+  st.className = "status" + (d.status ? " show" : "") + (d.throttle ? " hot" : "");
+
+  const c = d.cpu || {}, g = d.gpu || {};
+  $("cpuName").textContent = c.name || "";
+  setArc("cpuArc", c.load); setTemp("cpuTemp", c.temp);
+  $("cpuLoad").textContent = c.load == null ? "—" : `${Math.round(c.load)}%`;
+  $("cpuClock").innerHTML = unit(n(div(c.clock, 1000), 2), "GHz");
+  $("cpuPower").innerHTML = unit(n(c.power, 1), "W");
+  $("cpuPkg").innerHTML = unit(n(c.pkg), "°C");
+
+  $("gpuName").textContent = g.name || "";
+  setArc("gpuArc", g.load); setTemp("gpuTemp", g.temp);
+  $("gpuLoad").textContent = g.load == null ? "—" : `${Math.round(g.load)}%`;
+  $("gpuClock").innerHTML = unit(n(g.clock), "MHz");
+  $("gpuPower").innerHTML = unit(n(g.power, 1), "W");
+  $("gpuHot").innerHTML = unit(n(g.hotspot), "°C");
+
+  const f = d.fps || {};
+  $("fps").innerHTML = f.value == null ? PH : Math.round(f.value);
+  $("fps").className = "big" + (f.value == null ? " none" : "");
+  $("ft").innerHTML = f.frametime == null ? PH : `${f.frametime.toFixed(1)}<small> ms</small>`;
+  $("fpsProc").textContent = f.process || t("noGame");
+  push(fpsHist, f.value); spark($("fpsSpark"), [fpsHist], ["#f5f5f5"]);
+
+  const r = d.ram || {};
+  $("ramV").innerHTML = r.used == null ? "—" : `${r.used.toFixed(1)}<small>/ ${r.total.toFixed(1)} GB</small>`;
+  $("ramF").style.width = (r.load ?? 0) + "%";
+  const vu = g.vramUsed, vt = g.vramTotal;
+  $("vramV").innerHTML = vu == null || !vt ? "—" : `${(vu / 1024).toFixed(1)}<small>/ ${(vt / 1024).toFixed(0)} GB</small>`;
+  $("vramF").style.width = (vu && vt ? vu / vt * 100 : 0) + "%";
+  $("drives").innerHTML = (d.drives || []).map(x =>
+    `<div class="bar"><div class="head"><span class="micro">${esc(x.name)}</span><span class="v">${Math.round(x.pct)}%<small>${t("used")}</small></span></div>
+     <div class="track"><div class="fill" style="width:${x.pct}%;background:var(--disk)"></div></div></div>`).join("");
+
+  const nt = d.net || {};
+  $("down").innerHTML = rate(nt.down); $("up").innerHTML = rate(nt.up);
+  push(downHist, nt.down); push(upHist, nt.up);
+  spark($("netSpark"), [downHist, upHist], ["#5b9bd5", "#6cc287"]);
+
+  const p = d.power || {};
+  // En un PC sin batería no se muestran "Fuente" ni "Batería"
+  const rows = (p.battery == null ? [] : [
+    [t("source"), p.ac == null ? "—" : p.ac ? t("ac") : t("battery")],
+    [t("battery"), `${Math.round(p.battery)}%`],
+  ]).concat([[t("total"), p.total == null ? "—" : `${p.total.toFixed(1)} W`]]);
+  let html = rows.map(([k, v]) => `<div class="k">${k}</div><div class="v">${v}</div>`).join("");
+  if ((d.disks || []).length) {
+    html += `<div class="sep disk"></div>` + d.disks.map(x =>
+      `<div class="k disk">${esc(x.name)}</div><div class="v disk ${tempClass(x.temp)}">${x.temp == null ? "—" : Math.round(x.temp) + "°C"}</div>`).join("");
+  }
+  $("power").innerHTML = html;
+
+  $("cores").innerHTML = (c.cores || []).map(k =>
+    `<div class="core"><div class="top"><span>${t("core")} ${k.i}</span><span class="${tempClass(k.temp)}">${k.temp == null ? "—" : Math.round(k.temp) + "°"}</span></div>
+     <div class="clk">${k.clock == null ? "—" : (k.clock / 1000).toFixed(2) + " GHz"}</div>
+     <div class="track"><div class="fill" style="width:${k.load ?? 0}%;background:var(--cpu)"></div></div></div>`).join("");
+}
+
+async function tick() {
+  try {
+    const res = await fetch("/api/stats", { cache: "no-store" });
+    render(await res.json());
+    $("dot").classList.remove("off");
+  } catch {
+    $("dot").classList.add("off");
+    $("clock").textContent = t("offline");
+  }
+}
+
+// Diseño: "auto" usa el compacto cuando la pantalla está en horizontal y es baja (teléfono o tablet acostados).
+const LAYOUTS = ["auto", "compact", "full"];
+const mq = matchMedia("(orientation: landscape) and (max-height: 900px)");
+let layout = localStorage.getItem("hwpLayout") || "auto";
+function applyLayout() {
+  const compact = layout === "compact" || (layout === "auto" && mq.matches);
+  document.body.classList.toggle("compact", compact);
+  $("layout").title = { auto: "Layout: auto", compact: "Layout: compact", full: "Layout: full" }[layout];
+}
+$("layout").onclick = () => {
+  const isCompact = document.body.classList.contains("compact");
+  const want = isCompact ? "full" : "compact";
+  const autoWould = mq.matches ? "compact" : "full";
+  layout = want === autoWould ? "auto" : want;      // un solo toque para cambiar, y para volver
+  localStorage.setItem("hwpLayout", layout);
+  applyLayout();
+};
+mq.addEventListener("change", applyLayout);
+applyLayout();$("fs").onclick = () => document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.();
+applyLang();
+// Datos en vivo: la app empuja cada lectura en el mismo instante en que la muestra (Server-Sent Events).
+// Si el navegador no lo soporta, se pregunta cada segundo como antes.
+if ("EventSource" in window) {
+  const es = new EventSource("/api/stream");
+  es.onmessage = e => { try { render(JSON.parse(e.data)); $("dot").classList.remove("off"); } catch {} };
+  es.onerror = () => { $("dot").classList.add("off"); $("clock").textContent = t("offline"); }; // se reconecta solo
+} else {
+  tick();
+  setInterval(tick, 1000);
+}
+// Mantener la pantalla encendida en tablets/teléfonos usados como monitor (si el navegador lo permite).
+if ("wakeLock" in navigator) {
+  const lock = () => navigator.wakeLock.request("screen").catch(() => {});
+  lock(); document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && lock());
+}
+</script>
+</body>
+</html>

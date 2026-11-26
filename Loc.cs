@@ -1,0 +1,285 @@
+using System.ComponentModel;
+
+namespace HwPulse;
+
+/// <summary>
+/// Textos de la interfaz en inglés (por defecto) y español.
+/// En XAML: Text="{Binding [Key], Source={x:Static local:Loc.I}}" — se actualiza al cambiar de idioma.
+/// </summary>
+public sealed class Loc : INotifyPropertyChanged
+{
+    public static Loc I { get; } = new();
+    public event PropertyChangedEventHandler? PropertyChanged;
+
+    public string Lang { get; private set; } = "en";
+    public bool IsSpanish => Lang == "es";
+
+    public string this[string key] => T(key);
+
+    public void SetLanguage(string lang)
+    {
+        Lang = lang == "es" ? "es" : "en";
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs("Item[]"));
+        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Lang)));
+    }
+
+    public static string T(string key) =>
+        D.TryGetValue(key, out var v) ? (I.IsSpanish ? v.es : v.en) : key;
+
+    public static string F(string key, params object?[] args) => string.Format(T(key), args);
+
+    private static readonly Dictionary<string, (string en, string es)> D = new()
+    {
+        // Navegación
+        ["Overview"] = ("Overview", "Resumen"),
+        ["Sensors"] = ("Sensors", "Sensores"),
+        ["Settings"] = ("Settings", "Ajustes"),
+        ["Overlay"] = ("Overlay", "Overlay"),
+        ["Minimize"] = ("Minimize", "Minimizar"),
+        ["CloseToTray"] = ("Close to tray", "Cerrar a la bandeja"),
+
+        // Resumen
+        ["Temp"] = ("Temperature", "Temperatura"),
+        ["Clock"] = ("Clock", "Reloj"),
+        ["AvgClock"] = ("Avg clock", "Reloj prom."),
+        ["Usage"] = ("Usage", "Uso"),
+        ["Power"] = ("Power", "Potencia"),
+        ["Core"] = ("Core", "Núcleo"),
+        ["Load"] = ("Load", "Carga"),
+        ["TempHistory"] = ("Temperature · 10 min", "Temperatura · 10 min"),
+        ["ClockHistory"] = ("Clock · 10 min", "Reloj · 10 min"),
+        ["UsageHistory"] = ("Usage · 10 min", "Uso · 10 min"),
+        ["Memory"] = ("Memory", "Memoria"),
+        ["Storage"] = ("Storage", "Almacenamiento"),
+        ["PowerSection"] = ("Power", "Energía"),
+        ["Source"] = ("Source", "Fuente"),
+        ["Battery"] = ("Battery", "Batería"),
+        ["CpuGpuDraw"] = ("CPU + GPU draw", "Consumo CPU + GPU"),
+        ["Total"] = ("Total", "Total"),
+        ["AcAdapter"] = ("AC", "Corriente"),
+        ["OnBatteryShort"] = ("Battery", "Batería"),
+        ["Unknown"] = ("Unknown", "Desconocido"),
+        ["Charging"] = ("charging {0}", "cargando {0}"),
+        ["Discharging"] = ("discharging {0}", "descargando {0}"),
+        ["Full"] = ("full", "llena"),
+        ["MinMax"] = ("{0} – {1}", "{0} – {1}"),
+        ["Package"] = ("Package {0}", "Paquete {0}"),
+        ["TjMargin"] = ("{0} below TjMax", "{0} bajo TjMax"),
+        ["Vcore"] = ("Vcore {0}", "Vcore {0}"),
+        ["HotSpot"] = ("Hot spot {0}", "Hot spot {0}"),
+        ["MemClock"] = ("Memory {0}", "Memoria {0}"),
+        ["Fan"] = ("Fan {0}", "Ventilador {0}"),
+        ["Free"] = ("{0} free", "{0} libres"),
+        ["DiskTip"] = ("Read {0} · Write {1}", "Lectura {0} · Escritura {1}"),
+        ["DiskUsed"] = ("{0} used", "{0} ocupado"),
+        ["NoDisks"] = ("Disk sensors need administrator rights.", "Los discos requieren permisos de administrador."),
+
+        // Estado
+        ["StatusNoAdmin"] = ("Running without administrator rights. CPU temperature, clocks and power are unavailable.",
+                             "Sin permisos de administrador. No hay temperatura, relojes ni potencia del CPU."),
+        ["StatusThermal"] = ("Thermal throttling: CPU at {0}, at its limit. Clocks are being reduced.",
+                             "Throttling térmico: CPU a {0}, en su límite. Está bajando el reloj."),
+        ["StatusClockDrop"] = ("Clock drop under load: {0} vs {1} peak. Likely a power limit (PL1) or temperature.",
+                               "Reloj reducido con carga: {0} frente a {1} de máximo. Probable límite de potencia (PL1) o temperatura."),
+        ["StatusBattery"] = ("Running on battery. Performance is limited.", "Funcionando con batería. El rendimiento está limitado."),
+        ["Administrator"] = ("Administrator", "Administrador"),
+        ["LimitedMode"] = ("Limited mode", "Modo limitado"),
+        ["Refresh"] = ("1 s refresh · 10 min history", "Actualiza cada 1 s · historial 10 min"),
+        ["HotkeyHint"] = ("Ctrl+Shift+F10 overlay · Ctrl+Shift+F11 corner", "Ctrl+Shift+F10 overlay · Ctrl+Shift+F11 esquina"),
+        ["HotkeyFail"] = ("A shortcut is taken by another app. Use Settings or the tray menu.",
+                          "Otra app usa un atajo. Usa Ajustes o el menú de la bandeja."),
+
+        // Sensores
+        ["FilterSensors"] = ("Filter sensors…", "Filtrar sensores…"),
+        ["SensorCount"] = ("{0} sensors", "{0} sensores"),
+        ["Sensor"] = ("Sensor", "Sensor"),
+        ["Value"] = ("Value", "Valor"),
+        ["Min"] = ("Min", "Mín."),
+        ["Max"] = ("Max", "Máx."),
+
+        // Ajustes
+        ["Language"] = ("Language", "Idioma"),
+        ["ShowOverlay"] = ("Show overlay", "Mostrar overlay"),
+        ["Position"] = ("Position", "Posición"),
+        ["TopCenter"] = ("Top center", "Arriba centro"),
+        ["TopLeft"] = ("Top left", "Arriba izq."),
+        ["TopRight"] = ("Top right", "Arriba der."),
+        ["BottomLeft"] = ("Bottom left", "Abajo izq."),
+        ["BottomRight"] = ("Bottom right", "Abajo der."),
+        ["BgOpacity"] = ("Background opacity", "Opacidad del fondo"),
+        ["OverlaySize"] = ("Size", "Tamaño"),
+        ["OverlayNote"] = ("Draws over windowed and borderless games. Exclusive fullscreen is not supported, to stay safe with anti-cheat.",
+                           "Se dibuja sobre juegos en ventana o sin bordes. No funciona en pantalla completa exclusiva, para no tener problemas con los anti-cheat."),
+        ["Shortcuts"] = ("Shortcuts", "Atajos"),
+        ["ToggleOverlay"] = ("Show / hide overlay", "Mostrar / ocultar overlay"),
+        ["CycleCorner"] = ("Move overlay to next corner", "Mover el overlay a la siguiente esquina"),
+        ["About"] = ("About", "Acerca de"),
+        ["AboutText"] = ("Sensor data from LibreHardwareMonitorLib (MPL-2.0).", "Datos de sensores con LibreHardwareMonitorLib (MPL-2.0)."),
+
+        // Bandeja y mensajes
+        ["TrayOpen"] = ("Open HwPulse", "Abrir HwPulse"),
+        ["TrayToggle"] = ("Show / hide overlay", "Mostrar / ocultar overlay"),
+        ["TrayCorner"] = ("Next corner", "Siguiente esquina"),
+        ["TrayExit"] = ("Exit", "Salir"),
+        ["TrayNoticeTitle"] = ("HwPulse is still running", "HwPulse sigue abierto"),
+        ["TrayNoticeText"] = ("It's in the system tray. Double-click the icon to open it, or right-click → Exit.",
+                              "Está en la bandeja del sistema. Doble clic en el icono para abrirlo, o clic derecho → Salir."),
+        ["AlreadyRunning"] = ("HwPulse is already running. Look for it in the system tray.", "HwPulse ya está abierto. Búscalo en la bandeja del sistema."),
+        ["SensorInitFail"] = ("Could not start the sensors:", "No se pudieron iniciar los sensores:"),
+
+        // Páginas
+        ["Network"] = ("Network", "Red"),
+        ["OverviewSub"] = ("Real-time system performance", "Rendimiento del sistema en tiempo real"),
+        ["CpuSub"] = ("Clocks, temperature and load per core", "Relojes, temperatura y carga por núcleo"),
+        ["GpuSub"] = ("Graphics load, temperature and video memory", "Carga gráfica, temperatura y memoria de video"),
+        ["MemorySub"] = ("Physical and virtual memory", "Memoria física y virtual"),
+        ["StorageSub"] = ("Drives, disk temperature and activity", "Unidades, temperatura y actividad de discos"),
+        ["NetworkSub"] = ("Throughput per adapter", "Transferencia por adaptador"),
+        ["SensorsSub"] = ("Every sensor reported by the hardware", "Todos los sensores que reporta el hardware"),
+        ["SettingsSub"] = ("Language, overlay and shortcuts", "Idioma, overlay y atajos"),
+        ["Live"] = ("Live", "En vivo"),
+        ["Now"] = ("now", "ahora"),
+        ["Session"] = ("Session {0}", "Sesión {0}"),
+
+        // Resumen
+        ["SystemUsage"] = ("System usage", "Uso del sistema"),
+        ["Temperatures"] = ("Temperatures", "Temperaturas"),
+        ["TopProcesses"] = ("Top processes", "Procesos principales"),
+        ["TopMemory"] = ("Top processes by memory", "Procesos que más memoria usan"),
+        ["Name"] = ("Name", "Nombre"),
+        ["Ram"] = ("RAM", "RAM"),
+        ["Fans"] = ("Fans", "Ventiladores"),
+        ["NoFans"] = ("No fan sensors reported by this system.", "Este equipo no reporta sensores de ventilador."),
+        ["NoTemps"] = ("Temperatures need administrator rights.", "Las temperaturas requieren permisos de administrador."),
+        ["CpuPackage"] = ("CPU pkg", "CPU paq."),
+        ["GpuHotSpot"] = ("GPU hotspot", "GPU hotspot"),
+
+        // Memoria, almacenamiento, red
+        ["Physical"] = ("Physical memory", "Memoria física"),
+        ["Virtual"] = ("Virtual memory (commit)", "Memoria virtual (comprometida)"),
+        ["Drives"] = ("Drives", "Unidades"),
+        ["Disks"] = ("Physical disks", "Discos físicos"),
+        ["FreeOf"] = ("{0} free of {1}", "{0} libres de {1}"),
+        ["Activity"] = ("Activity", "Actividad"),
+        ["Read"] = ("Read", "Lectura"),
+        ["Write"] = ("Write", "Escritura"),
+        ["Download"] = ("Download", "Descarga"),
+        ["Upload"] = ("Upload", "Subida"),
+        ["Adapters"] = ("Adapters", "Adaptadores"),
+        ["Received"] = ("Received", "Recibido"),
+        ["Sent"] = ("Sent", "Enviado"),
+        ["NoNetwork"] = ("No active network adapters.", "No hay adaptadores de red activos."),
+        ["ThroughputHistory"] = ("Throughput", "Transferencia"),
+
+        // Procesos por página
+        ["CoresTitle"] = ("Per core", "Por núcleo"),
+        ["TopByCpu"] =("Top processes by CPU", "Procesos que más CPU usan"),
+        ["TopByGpu"] = ("Top processes by GPU", "Procesos que más GPU usan"),
+        ["TopByDisk"] = ("Top processes by disk activity", "Procesos con más lectura y escritura"),
+        ["TopByNet"] = ("Top processes by network", "Procesos que más red usan"),
+        ["NoActivity"] = ("No activity right now.", "Sin actividad en este momento."),
+        ["NetNeedsAdmin"] = ("Per-process network needs administrator rights.", "La red por proceso requiere permisos de administrador."),
+        ["DiskIoHint"] = ("Includes all reads and writes of each program (files, devices).", "Incluye toda la lectura y escritura de cada programa (archivos y dispositivos)."),
+
+        // Selección de temperaturas
+        ["TempSettings"] = ("Temperatures", "Temperaturas"),
+        ["TempSettingsSub"] = ("Choose which sensors appear in the Overview temperature panel.",
+                               "Elige qué sensores aparecen en el panel de temperaturas del Resumen."),
+        ["TempCpuMax"] = ("CPU (hottest core)", "CPU (núcleo más caliente)"),
+        ["TempCpuPkg"] = ("CPU package", "CPU paquete"),
+        ["TempCpuAvg"] = ("CPU (average)", "CPU (promedio)"),
+        ["TempCpuCore"] = ("CPU core {0}", "CPU núcleo {0}"),
+        ["TempGpuMem"] = ("GPU memory", "GPU memoria"),
+        ["OtherSensors"] = ("Other", "Otros"),
+        ["ShortCpuPkg"] = ("CPU pkg", "CPU paq."),
+        ["ShortCpuAvg"] = ("CPU avg", "CPU prom."),
+        ["ShortCore"] = ("Core {0}", "Núcleo {0}"),
+        ["ShortGpuHot"] = ("GPU hot", "GPU hot"),
+        ["ShortGpuMem"] = ("GPU mem", "GPU mem"),
+        ["RestoreDefaults"] = ("Restore defaults", "Restaurar"),
+        ["TempNone"] = ("Sensors appear here once they finish loading.", "Los sensores aparecen aquí cuando terminan de cargar."),
+
+        // Valores del overlay
+        ["ShowInOverlay"] = ("Show in overlay", "Mostrar en el overlay"),
+        ["Ov.fps"] = ("FPS", "FPS"),
+        ["Ov.frametime"] = ("Frametime", "Frametime"),
+        ["Ov.cpuLoad"] = ("CPU usage", "Uso de CPU"),
+        ["Ov.cpuTemp"] = ("CPU temp", "Temp. de CPU"),
+        ["Ov.cpuClock"] = ("CPU clock", "Reloj de CPU"),
+        ["Ov.gpuLoad"] = ("GPU usage", "Uso de GPU"),
+        ["Ov.gpuTemp"] = ("GPU temp", "Temp. de GPU"),
+        ["Ov.vram"] = ("VRAM", "VRAM"),
+        ["Ov.ram"] = ("RAM", "RAM"),
+        ["Ov.power"] = ("Power (CPU + GPU)", "Consumo (CPU + GPU)"),
+
+        // Colores del overlay
+        ["CustomizeColors"] = ("Customize colors…", "Personalizar colores…"),
+        ["ColorsTitle"] = ("Overlay colors", "Colores del overlay"),
+        ["ColorsSub"] = ("Changes apply to the overlay instantly.", "Los cambios se aplican al overlay al instante."),
+        ["Col.bg"] = ("Background", "Fondo"),
+        ["Col.border"] = ("Border & dividers", "Borde y separadores"),
+        ["Col.text"] = ("Values", "Valores"),
+        ["Col.labels"] = ("Labels", "Etiquetas"),
+        ["Col.cpu"] = ("CPU bar", "Barra de CPU"),
+        ["Col.gpu"] = ("GPU bar & FPS graph", "Barra de GPU y gráfica de FPS"),
+        ["Col.mem"] = ("VRAM & RAM bars", "Barras de VRAM y RAM"),
+        ["Hue"] = ("Hue", "Tono"),
+        ["Saturation"] = ("Saturation", "Saturación"),
+        ["Lightness"] = ("Lightness", "Luminosidad"),
+        ["ResetColors"] = ("Reset all", "Restaurar todo"),
+        ["Done"] = ("Done", "Listo"),
+
+        // Panel web
+        ["WebDashboard"] = ("Web dashboard", "Panel web"),
+        ["WebEnable"] = ("Serve a live dashboard in the browser", "Mostrar un panel en vivo en el navegador"),
+        ["WebLanSwitch"] = ("Allow other devices on my network", "Permitir otros dispositivos de mi red"),
+        ["WebLanDesc"] = ("Opens the port in Windows Firewall for private networks only, so a phone or tablet on your Wi-Fi can show the dashboard.",
+                          "Abre el puerto en el firewall de Windows solo para redes privadas, para que un teléfono o tablet en tu Wi-Fi pueda mostrar el panel."),
+        ["WebOnThisPc"] = ("On this PC", "En este equipo"),
+        ["WebOnNetwork"] = ("On your network", "En tu red"),
+        ["Open"] = ("Open", "Abrir"),
+        ["WebFailed"] = ("Could not start the web dashboard: port {0} is in use.", "No se pudo iniciar el panel web: el puerto {0} está en uso."),
+        ["WebLanNeedsAdmin"] = ("Network access needs HwPulse to run as administrator.", "El acceso desde la red requiere abrir HwPulse como administrador."),
+        ["WebLanFailed"] = ("Could not open the dashboard to the network.", "No se pudo abrir el panel a la red."),
+        ["WebScan"] = ("Scan with your phone's camera", "Escanéalo con la cámara del teléfono"),
+        ["WebScanHint"] = ("The phone must be on the same Wi-Fi as this PC.", "El teléfono debe estar en la misma red Wi-Fi que este equipo."),
+        ["WebOrType"] = ("Or type this address", "O escribe esta dirección"),
+        ["WebTypeHint"] = ("Type it in the browser's address bar, nothing else needed.", "Escríbela en la barra de direcciones del navegador, nada más."),
+        ["TrayWeb"] =("Open web dashboard", "Abrir panel web"),
+
+        // FPS
+        ["Starting"] = ("Starting sensors…", "Iniciando sensores…"),
+        ["NoGame"] = ("no game in focus", "sin juego en primer plano"),
+        ["FpsNeedsAdmin"] = ("FPS needs admin", "FPS requiere admin"),
+
+        // Etiquetas diminutas de las tarjetas
+        ["MicroUsage"] = ("USAGE", "USO"),
+        ["MicroTemp"] = ("TEMP", "TEMP."),
+        ["MicroClock"] = ("CLOCK", "RELOJ"),
+        ["MicroUsedTotal"] = ("USED / TOTAL", "USADO / TOTAL"),
+        ["MicroUsed"] = ("USED", "OCUPADO"),
+        ["MicroFreeTotal"] = ("FREE / TOTAL", "LIBRE / TOTAL"),
+
+        // Ajustes del overlay
+        ["OverlayStyle"] = ("Style", "Estilo"),
+        ["StylePanel"] = ("Panel", "Panel"),
+        ["StyleCompact"] = ("Single line", "Una línea"),
+
+        // Tipos de sensor
+        ["Type.Voltage"] = ("Voltage", "Voltaje"),
+        ["Type.Current"] = ("Current", "Corriente"),
+        ["Type.Power"] = ("Power", "Potencia"),
+        ["Type.Clock"] = ("Clock", "Reloj"),
+        ["Type.Temperature"] = ("Temperature", "Temperatura"),
+        ["Type.Load"] = ("Load", "Uso"),
+        ["Type.Frequency"] = ("Frequency", "Frecuencia"),
+        ["Type.Fan"] = ("Fan", "Ventilador"),
+        ["Type.Control"] = ("Control", "Control"),
+        ["Type.Level"] = ("Level", "Nivel"),
+        ["Type.Data"] = ("Data", "Datos"),
+        ["Type.SmallData"] = ("Data", "Datos"),
+        ["Type.Throughput"] = ("Throughput", "Transferencia"),
+        ["Type.TimeSpan"] = ("Time", "Tiempo"),
+        ["Type.Energy"] = ("Energy", "Energía"),
+    };
+}

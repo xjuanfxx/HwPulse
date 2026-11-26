@@ -1,0 +1,51 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <!-- Release (lo que se publica) exige administrador; Debug no, para poder probar sin el aviso de UAC. -->
+    <ApplicationManifest Condition="'$(Configuration)' == 'Debug'">app.dev.manifest</ApplicationManifest>
+    <ApplicationManifest Condition="'$(Configuration)' != 'Debug'">app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\HwPulse.ico</ApplicationIcon>
+    <AssemblyTitle>HwPulse</AssemblyTitle>
+    <Version>0.2.0</Version>
+  </PropertyGroup>
+
+  <!-- Seguridad: no empaquetar DLL nativas que no se usan en Windows (símbolos de TraceEvent y el ayudante
+       de Mono para Linux). Si se incluyeran, el .exe las extraería a %TEMP% (carpeta escribible por el usuario)
+       y, como la app corre como administrador, alguien podría reemplazarlas para elevar privilegios. -->
+  <PropertyGroup>
+    <IncludeNativeLibrariesForSelfExtract>false</IncludeNativeLibrariesForSelfExtract>
+  </PropertyGroup>
+  <Target Name="DropUnusedNativeLibraries" AfterTargets="ComputeResolvedFilesToPublishList">
+    <ItemGroup>
+      <ResolvedFileToPublish Remove="@(ResolvedFileToPublish)" Condition="'%(Filename)' == 'KernelTraceControl' Or '%(Filename)' == 'msdia140' Or '%(Filename)' == 'MonoPosixHelper' Or '%(Filename)' == 'libMonoPosixHelper'" />
+    </ItemGroup>
+  </Target>
+
+  <ItemGroup>
+    <!-- WPF y WinForms juntos: quitamos los using globales de WinForms para evitar ambigüedades. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Resource Include="Fonts\*.ttf" />
+    <Resource Include="Assets\HwPulse.ico" />
+    <EmbeddedResource Include="Web\index.html" LogicalName="HwPulse.Web.index.html" />
+    <EmbeddedResource Include="Assets\HwPulse-256.png" LogicalName="HwPulse.Web.icon.png" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
+    <PackageReference Include="Microsoft.Diagnostics.Tracing.TraceEvent" Version="4.0.2" />
+    <PackageReference Include="QRCoder" Version="1.9.0" />
+    <PackageReference Include="System.Diagnostics.PerformanceCounter" Version="11.0.0" />
+    <PackageReference Include="System.Management" Version="11.0.0" />
+  </ItemGroup>
+
+</Project>

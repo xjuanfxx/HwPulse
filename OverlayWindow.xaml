@@ -1,0 +1,184 @@
+<Window x:Class="HwPulse.OverlayWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:HwPulse"
+        Title="HwPulse overlay"
+        WindowStyle="None" AllowsTransparency="True" Background="Transparent"
+        Topmost="True" ShowInTaskbar="False" ShowActivated="False" Focusable="False"
+        ResizeMode="NoResize" SizeToContent="WidthAndHeight"
+        FontFamily="{StaticResource NumFont}" FontSize="13" FontWeight="SemiBold"
+        Foreground="#FAFAFA" TextOptions.TextFormattingMode="Ideal" TextOptions.TextRenderingMode="Grayscale" UseLayoutRounding="True">
+    <Window.Resources>
+        <Style x:Key="Tag" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="10"/>
+            <Setter Property="FontWeight" Value="Bold"/>
+            <Setter Property="Foreground" Value="{Binding OvLabelBrush}"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="Val" TargetType="TextBlock">
+            <Setter Property="Typography.NumeralAlignment" Value="Tabular"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+        </Style>
+        <Style x:Key="OsdBar" TargetType="ProgressBar">
+            <Setter Property="Height" Value="3"/>
+            <Setter Property="Maximum" Value="100"/>
+            <Setter Property="Background" Value="#2EFFFFFF"/>
+            <Setter Property="VerticalAlignment" Value="Center"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ProgressBar">
+                        <Grid>
+                            <Border x:Name="PART_Track" Background="{TemplateBinding Background}" CornerRadius="1.5"/>
+                            <Border x:Name="PART_Indicator" Background="{TemplateBinding Foreground}" CornerRadius="1.5" HorizontalAlignment="Left"/>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <!-- El tamaño se aplica multiplicando fuentes y medidas reales (OverlayWindow.ApplyScale), no con una
+         transformación: así el texto se dibuja a su tamaño final y no sale dentado al agrandarlo.
+         Margen superior para que la etiqueta THROTTLE (que sobresale) no se recorte al dibujar. -->
+    <Grid Margin="0,7,0,0">
+
+        <!-- ===== Estilo panel ===== -->
+        <Border Visibility="{Binding OverlayPanelVisibility}" Background="{Binding OverlayBackground}"
+                BorderBrush="{Binding OvBorderBrush}" BorderThickness="1" CornerRadius="8" Padding="14,12" Width="236">
+            <StackPanel>
+                <!-- FPS + frametime: etiquetas arriba, valores abajo alineados por la base -->
+                <StackPanel Visibility="{Binding OvFpsGroup}">
+                    <Grid>
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock Style="{StaticResource Tag}" Text="FPS" Visibility="{Binding OvFps}"/>
+                        <TextBlock Grid.Column="1" Style="{StaticResource Tag}" Text="FRAMETIME" HorizontalAlignment="Right" Visibility="{Binding OvFrametime}"/>
+                        <TextBlock Grid.Row="1" Style="{StaticResource Val}" Text="{Binding FpsText}" Foreground="{Binding FpsBrush}" Visibility="{Binding OvFps}"
+                                   FontSize="28" FontWeight="Bold" VerticalAlignment="Bottom" Margin="0,2,0,0"/>
+                        <TextBlock Grid.Row="1" Grid.Column="1" Style="{StaticResource Val}" Text="{Binding FrametimeText}" Foreground="{Binding FpsBrush}"
+                                   Visibility="{Binding OvFrametime}" FontSize="16" VerticalAlignment="Bottom" HorizontalAlignment="Right" Margin="0,0,0,4"/>
+                    </Grid>
+                    <local:SparkChart Height="22" Margin="0,6,0,0" Values="{Binding FpsSeries}" Minimum="0" Maximum="NaN" Capacity="60"
+                                      Stroke="{Binding OvGpuBrush}" ShowFrame="False" Visibility="{Binding OvFps}"/>
+                    <TextBlock Text="{Binding FpsSource}" FontSize="10" FontWeight="Medium" Foreground="{Binding OvLabelBrush}" Opacity="0.8" Margin="0,4,0,0" TextTrimming="CharacterEllipsis"/>
+                </StackPanel>
+
+                <Border Height="1" Background="{Binding OvDividerBrush}" Margin="0,10,0,8" Visibility="{Binding OvRowsDivider}"/>
+
+                <!-- Filas: etiqueta · barra · valores (cada fila se oculta sola) -->
+                <Grid Height="22" Visibility="{Binding OvCpuGroup}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="40"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Style="{StaticResource Tag}" Text="CPU"/>
+                    <ProgressBar Grid.Column="1" Style="{StaticResource OsdBar}" Value="{Binding CpuLoadPct, Mode=OneWay}" Foreground="{Binding OvCpuBrush}" Visibility="{Binding OvCpuLoad}"/>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="10,0,0,0">
+                        <TextBlock Style="{StaticResource Val}" Text="{Binding CpuClockShort}" Visibility="{Binding OvCpuClock}" Margin="0,0,8,0"/>
+                        <TextBlock Style="{StaticResource Val}" Text="{Binding CpuLoadText}" MinWidth="38" TextAlignment="Right" Visibility="{Binding OvCpuLoad}"/>
+                        <TextBlock Style="{StaticResource Val}" Text="{Binding CpuTempShort}" Foreground="{Binding CpuTempBrush}" MinWidth="34" TextAlignment="Right" Visibility="{Binding OvCpuTemp}"/>
+                    </StackPanel>
+                </Grid>
+                <Grid Height="22" Visibility="{Binding OvGpuGroup}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="40"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Style="{StaticResource Tag}" Text="GPU"/>
+                    <ProgressBar Grid.Column="1" Style="{StaticResource OsdBar}" Value="{Binding GpuLoadPct, Mode=OneWay}" Foreground="{Binding OvGpuBrush}" Visibility="{Binding OvGpuLoad}"/>
+                    <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="10,0,0,0">
+                        <TextBlock Style="{StaticResource Val}" Text="{Binding GpuLoadText}" MinWidth="38" TextAlignment="Right" Visibility="{Binding OvGpuLoad}"/>
+                        <TextBlock Style="{StaticResource Val}" Text="{Binding GpuTempShort}" Foreground="{Binding GpuTempBrush}" MinWidth="34" TextAlignment="Right" Visibility="{Binding OvGpuTemp}"/>
+                    </StackPanel>
+                </Grid>
+                <Grid Height="22" Visibility="{Binding OvVramGroup}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="40"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Style="{StaticResource Tag}" Text="VRAM"/>
+                    <ProgressBar Grid.Column="1" Style="{StaticResource OsdBar}" Value="{Binding VramPct, Mode=OneWay}" Foreground="{Binding OvMemBrush}"/>
+                    <TextBlock Grid.Column="2" Style="{StaticResource Val}" Text="{Binding GpuVramShort}" HorizontalAlignment="Right" Margin="10,0,0,0"/>
+                </Grid>
+                <Grid Height="22" Visibility="{Binding OvRamGroup}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="40"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Style="{StaticResource Tag}" Text="RAM"/>
+                    <ProgressBar Grid.Column="1" Style="{StaticResource OsdBar}" Value="{Binding RamPct, Mode=OneWay}" Foreground="{Binding OvMemBrush}"/>
+                    <TextBlock Grid.Column="2" Style="{StaticResource Val}" Text="{Binding RamShort}" HorizontalAlignment="Right" Margin="10,0,0,0"/>
+                </Grid>
+                <Grid Height="22" Visibility="{Binding OvPowerGroup}">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="40"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Style="{StaticResource Tag}" Text="PWR"/>
+                    <TextBlock Grid.Column="1" Style="{StaticResource Val}" Text="{Binding TotalPowerText}" HorizontalAlignment="Right"/>
+                </Grid>
+            </StackPanel>
+        </Border>
+
+        <!-- ===== Estilo una línea: cada grupo se oculta entero y los separadores solo aparecen entre grupos visibles ===== -->
+        <Border Visibility="{Binding OverlayCompactVisibility}" Background="{Binding OverlayBackground}"
+                BorderBrush="{Binding OvBorderBrush}" BorderThickness="1" CornerRadius="6" Padding="10,5">
+            <StackPanel Orientation="Horizontal">
+                <StackPanel Orientation="Horizontal" Visibility="{Binding OvFpsGroup}">
+                    <TextBlock Style="{StaticResource Tag}" Text="FPS" Margin="0,1,6,0"/>
+                    <TextBlock Style="{StaticResource Val}" Text="{Binding FpsText}" FontWeight="Bold" MinWidth="26" Visibility="{Binding OvFps}"/>
+                    <TextBlock Style="{StaticResource Val}" Text="{Binding FrametimeText}" Foreground="{Binding OvLabelBrush}" Margin="6,0,0,0" Visibility="{Binding OvFrametime}"/>
+                </StackPanel>
+
+                <Border Width="1" Height="12" Background="{Binding OvDividerBrush}" Margin="10,0" VerticalAlignment="Center" Visibility="{Binding OvSepCpu}"/>
+                <StackPanel Orientation="Horizontal" Visibility="{Binding OvCpuGroup}">
+                    <TextBlock Style="{StaticResource Tag}" Text="CPU" Margin="0,1,6,0"/>
+                    <TextBlock Style="{StaticResource Val}" Text="{Binding CpuLoadText}" MinWidth="34" Visibility="{Binding OvCpuLoad}"/>
+                    <TextBlock Style="{StaticResource Val}" Text="{Binding CpuTempShort}" Foreground="{Binding CpuTempBrush}" Margin="6,0,0,0" Visibility="{Binding OvCpuTemp}"/>
+                    <TextBlock Style="{StaticResource Val}" Text="{Binding CpuClockShort}" Margin="6,0,0,0" Visibility="{Binding OvCpuClock}"/>
+                </StackPanel>
+
+                <Border Width="1" Height="12" Background="{Binding OvDividerBrush}" Margin="10,0" VerticalAlignment="Center" Visibility="{Binding OvSepGpu}"/>
+                <StackPanel Orientation="Horizontal" Visibility="{Binding OvGpuGroup}">
+                    <TextBlock Style="{StaticResource Tag}" Text="GPU" Margin="0,1,6,0"/>
+                    <TextBlock Style="{StaticResource Val}" Text="{Binding GpuLoadText}" MinWidth="34" Visibility="{Binding OvGpuLoad}"/>
+                    <TextBlock Style="{StaticResource Val}" Text="{Binding GpuTempShort}" Foreground="{Binding GpuTempBrush}" Margin="6,0,0,0" Visibility="{Binding OvGpuTemp}"/>
+                </StackPanel>
+
+                <Border Width="1" Height="12" Background="{Binding OvDividerBrush}" Margin="10,0" VerticalAlignment="Center" Visibility="{Binding OvSepVram}"/>
+                <StackPanel Orientation="Horizontal" Visibility="{Binding OvVramGroup}">
+                    <TextBlock Style="{StaticResource Tag}" Text="VRAM" Margin="0,1,6,0"/>
+                    <TextBlock Style="{StaticResource Val}" Text="{Binding GpuVramShort}"/>
+                </StackPanel>
+
+                <Border Width="1" Height="12" Background="{Binding OvDividerBrush}" Margin="10,0" VerticalAlignment="Center" Visibility="{Binding OvSepRam}"/>
+                <StackPanel Orientation="Horizontal" Visibility="{Binding OvRamGroup}">
+                    <TextBlock Style="{StaticResource Tag}" Text="RAM" Margin="0,1,6,0"/>
+                    <TextBlock Style="{StaticResource Val}" Text="{Binding RamShort}"/>
+                </StackPanel>
+
+                <Border Width="1" Height="12" Background="{Binding OvDividerBrush}" Margin="10,0" VerticalAlignment="Center" Visibility="{Binding OvSepPower}"/>
+                <StackPanel Orientation="Horizontal" Visibility="{Binding OvPowerGroup}">
+                    <TextBlock Style="{StaticResource Tag}" Text="PWR" Margin="0,1,6,0"/>
+                    <TextBlock Style="{StaticResource Val}" Text="{Binding TotalPowerText}"/>
+                </StackPanel>
+            </StackPanel>
+        </Border>
+
+        <!-- Aviso de throttling (ambos estilos) -->
+        <Border Background="#C9463E" CornerRadius="3" Padding="5,1" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-6,8,0"
+                Visibility="{Binding ThrottleVisibility}">
+            <TextBlock Text="THROTTLE" FontSize="9" FontWeight="Bold" Foreground="White"/>
+        </Border>
+    </Grid>
+</Window>
