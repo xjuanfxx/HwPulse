@@ -917,24 +917,63 @@
 
                             <!-- ======== Columna izquierda: idioma, overlay, atajos ======== -->
                             <StackPanel>
-                                <!-- Idioma y versión -->
+                                <!-- Idioma, comportamiento de la X, inicio con Windows y versión -->
                                 <Border Style="{StaticResource Panel}" Padding="16,14">
-                                    <DockPanel>
-                                        <StackPanel DockPanel.Dock="Right" VerticalAlignment="Center" HorizontalAlignment="Right">
-                                            <TextBlock Style="{StaticResource Body}" Text="{Binding Version}" HorizontalAlignment="Right"/>
-                                            <TextBlock Style="{StaticResource Hint}" Text="LibreHardwareMonitorLib · MPL-2.0" HorizontalAlignment="Right" Margin="0,2,0,0"
-                                                       ToolTip="{Binding [AboutText], Source={x:Static local:Loc.I}}"/>
-                                        </StackPanel>
-                                        <StackPanel>
-                                            <TextBlock Style="{StaticResource SectionTitle}" Text="{Binding [Language], Source={x:Static local:Loc.I}}"/>
-                                            <Border Style="{StaticResource SegmentHost}" Margin="0,10,0,0">
-                                                <StackPanel Orientation="Horizontal">
-                                                    <RadioButton GroupName="lang" Style="{StaticResource Segment}" Content="English" IsChecked="{Binding LangEnglish}"/>
-                                                    <RadioButton GroupName="lang" Style="{StaticResource Segment}" Content="Español" IsChecked="{Binding LangSpanish}"/>
-                                                </StackPanel>
-                                            </Border>
-                                        </StackPanel>
-                                    </DockPanel>
+                                    <StackPanel>
+                                        <Grid>
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                            </Grid.ColumnDefinitions>
+                                            <StackPanel>
+                                                <TextBlock Style="{StaticResource SectionTitle}" Text="{Binding [Language], Source={x:Static local:Loc.I}}"/>
+                                                <Border Style="{StaticResource SegmentHost}" Margin="0,10,0,0">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <RadioButton GroupName="lang" Style="{StaticResource Segment}" Content="English" IsChecked="{Binding LangEnglish}"/>
+                                                        <RadioButton GroupName="lang" Style="{StaticResource Segment}" Content="Español" IsChecked="{Binding LangSpanish}"/>
+                                                    </StackPanel>
+                                                </Border>
+                                            </StackPanel>
+                                            <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                                                <TextBlock Style="{StaticResource SectionTitle}" Text="{Binding [OnClose], Source={x:Static local:Loc.I}}"/>
+                                                <Border Style="{StaticResource SegmentHost}" Margin="0,10,0,0">
+                                                    <StackPanel Orientation="Horizontal">
+                                                        <RadioButton GroupName="onclose" Style="{StaticResource Segment}" IsChecked="{Binding CloseAsk}" Content="{Binding [OnCloseAsk], Source={x:Static local:Loc.I}}"/>
+                                                        <RadioButton GroupName="onclose" Style="{StaticResource Segment}" IsChecked="{Binding CloseTray}" Content="{Binding [OnCloseTray], Source={x:Static local:Loc.I}}"/>
+                                                        <RadioButton GroupName="onclose" Style="{StaticResource Segment}" IsChecked="{Binding CloseExit}" Content="{Binding [OnCloseExit], Source={x:Static local:Loc.I}}"/>
+                                                    </StackPanel>
+                                                </Border>
+                                            </StackPanel>
+                                        </Grid>
+                                        <DockPanel Margin="0,12,0,0">
+                                            <StackPanel DockPanel.Dock="Right" VerticalAlignment="Center">
+                                                <TextBlock Style="{StaticResource Body}" Text="{Binding Version}" HorizontalAlignment="Right"/>
+                                                <!-- Enlace de actualización: buscar / al día / actualizar a X -->
+                                                <Button HorizontalAlignment="Right" Margin="0,2,0,0" Cursor="Hand" Click="Update_Click" IsEnabled="{Binding UpdateEnabled}"
+                                                        ToolTip="{Binding [AboutText], Source={x:Static local:Loc.I}}">
+                                                    <Button.Template>
+                                                        <ControlTemplate TargetType="Button">
+                                                            <TextBlock x:Name="t" Text="{Binding UpdateText}" FontSize="11" Foreground="{StaticResource Muted}"/>
+                                                            <ControlTemplate.Triggers>
+                                                                <Trigger Property="IsMouseOver" Value="True">
+                                                                    <Setter TargetName="t" Property="TextDecorations" Value="Underline"/>
+                                                                </Trigger>
+                                                                <DataTrigger Binding="{Binding UpdateReady}" Value="True">
+                                                                    <Setter TargetName="t" Property="Foreground" Value="{StaticResource Accent}"/>
+                                                                    <Setter TargetName="t" Property="FontWeight" Value="SemiBold"/>
+                                                                </DataTrigger>
+                                                            </ControlTemplate.Triggers>
+                                                        </ControlTemplate>
+                                                    </Button.Template>
+                                                </Button>
+                                            </StackPanel>
+                                            <CheckBox Style="{StaticResource Switch}" IsChecked="{Binding StartWithWindows}" VerticalAlignment="Center"/>
+                                            <StackPanel Margin="10,0,8,0" VerticalAlignment="Center">
+                                                <TextBlock Style="{StaticResource Body}" Text="{Binding [StartWithWindows], Source={x:Static local:Loc.I}}"/>
+                                                <TextBlock Style="{StaticResource Hint}" Text="{Binding [StartWithWindowsHint], Source={x:Static local:Loc.I}}" Margin="0,2,0,0"/>
+                                            </StackPanel>
+                                        </DockPanel>
+                                    </StackPanel>
                                 </Border>
 
                                 <!-- Overlay -->
@@ -946,12 +985,17 @@
                                         </DockPanel>
 
                                         <TextBlock Style="{StaticResource Caption}" Text="{Binding [OverlayStyle], Source={x:Static local:Loc.I}}" Margin="0,12,0,6"/>
-                                        <Border Style="{StaticResource SegmentHost}">
-                                            <StackPanel Orientation="Horizontal">
-                                                <RadioButton GroupName="ostyle" Style="{StaticResource Segment}" IsChecked="{Binding OverlayPanel}" Content="{Binding [StylePanel], Source={x:Static local:Loc.I}}"/>
-                                                <RadioButton GroupName="ostyle" Style="{StaticResource Segment}" IsChecked="{Binding OverlayCompact}" Content="{Binding [StyleCompact], Source={x:Static local:Loc.I}}"/>
-                                            </StackPanel>
-                                        </Border>
+                                        <DockPanel>
+                                            <!-- Colores junto al estilo: ahorra una fila entera -->
+                                            <Button DockPanel.Dock="Right" Style="{StaticResource SmallButton}" VerticalAlignment="Center" Click="Colors_Click"
+                                                    Content="{Binding [CustomizeColors], Source={x:Static local:Loc.I}}"/>
+                                            <Border Style="{StaticResource SegmentHost}" HorizontalAlignment="Left">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <RadioButton GroupName="ostyle" Style="{StaticResource Segment}" IsChecked="{Binding OverlayPanel}" Content="{Binding [StylePanel], Source={x:Static local:Loc.I}}"/>
+                                                    <RadioButton GroupName="ostyle" Style="{StaticResource Segment}" IsChecked="{Binding OverlayCompact}" Content="{Binding [StyleCompact], Source={x:Static local:Loc.I}}"/>
+                                                </StackPanel>
+                                            </Border>
+                                        </DockPanel>
 
                                         <TextBlock Style="{StaticResource Caption}" Text="{Binding [ShowInOverlay], Source={x:Static local:Loc.I}}" Margin="0,12,0,2"/>
                                         <ItemsControl ItemsSource="{Binding OverlayItemChoices}" Margin="-8,0,-8,0">
@@ -1004,8 +1048,6 @@
                                             </StackPanel>
                                         </Grid>
 
-                                        <Button Style="{StaticResource SmallButton}" HorizontalAlignment="Left" Margin="0,10,0,0" Click="Colors_Click"
-                                                Content="{Binding [CustomizeColors], Source={x:Static local:Loc.I}}"/>
                                         <!-- Atajos del overlay (antes en un panel aparte) -->
                                         <Grid Margin="0,12,0,0">
                                             <Grid.ColumnDefinitions>
@@ -1109,7 +1151,7 @@
                                                 <ColumnDefinition Width="Auto"/>
                                                 <ColumnDefinition Width="*"/>
                                             </Grid.ColumnDefinitions>
-                                            <Border Background="White" CornerRadius="8" Padding="6" Width="120" Height="120" VerticalAlignment="Top">
+                                            <Border Background="White" CornerRadius="8" Padding="5" Width="104" Height="104" VerticalAlignment="Top">
                                                 <Image Source="{Binding WebQr}" RenderOptions.BitmapScalingMode="NearestNeighbor"/>
                                             </Border>
                                             <StackPanel Grid.Column="1" Margin="14,0,0,0">
@@ -1118,7 +1160,6 @@
                                                 <TextBlock Style="{StaticResource Caption}" Text="{Binding [WebOrType], Source={x:Static local:Loc.I}}" Margin="0,10,0,4"/>
                                                 <TextBox Style="{StaticResource SearchBox}" IsReadOnly="True" FontFamily="{StaticResource MonoFont}" FontSize="16"
                                                          Text="{Binding WebTypeUrl, Mode=OneWay}"/>
-                                                <TextBlock Style="{StaticResource Hint}" Text="{Binding [WebTypeHint], Source={x:Static local:Loc.I}}" TextWrapping="Wrap" Margin="0,6,0,0"/>
                                             </StackPanel>
                                         </Grid>
                                         <TextBlock Style="{StaticResource Hint}" Foreground="#E0A84A" Text="{Binding WebNote}" Visibility="{Binding WebNoteVisibility}"

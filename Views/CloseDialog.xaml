@@ -1,0 +1,47 @@
+<Window x:Class="HwPulse.CloseDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:HwPulse"
+        Title="HwPulse" SizeToContent="WidthAndHeight" ResizeMode="NoResize" ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource Bg}" Foreground="{StaticResource Text}"
+        FontFamily="{StaticResource UiFont}" FontSize="12"
+        TextOptions.TextFormattingMode="Ideal" TextOptions.TextRenderingMode="ClearType" UseLayoutRounding="True">
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="40" ResizeBorderThickness="0" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False"/>
+    </WindowChrome.WindowChrome>
+    <Window.Resources>
+        <!-- Botón principal: mismo molde que SmallButton, relleno con el color de acento -->
+        <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource SmallButton}">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="b" Background="{StaticResource Accent}" CornerRadius="6" Padding="14,6">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="b" Property="Opacity" Value="0.88"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <StackPanel Margin="22,18,22,18" Width="360">
+        <TextBlock FontSize="15" FontWeight="SemiBold" Text="{Binding [CloseTitle], Source={x:Static local:Loc.I}}"/>
+        <TextBlock Style="{StaticResource Hint}" Margin="0,6,0,0" TextWrapping="Wrap" Text="{Binding [CloseText], Source={x:Static local:Loc.I}}"/>
+        <CheckBox x:Name="Remember" Style="{StaticResource CheckRow}" Margin="-8,12,0,0" HorizontalAlignment="Left">
+            <TextBlock Text="{Binding [CloseRemember], Source={x:Static local:Loc.I}}"/>
+        </CheckBox>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+            <Button Style="{StaticResource SmallButton}" Click="Exit_Click" Margin="0,0,8,0"
+                    Content="{Binding [CloseExitBtn], Source={x:Static local:Loc.I}}"/>
+            <Button x:Name="TrayBtn" Style="{StaticResource PrimaryButton}" Click="Tray_Click" IsDefault="True"
+                    Content="{Binding [CloseToTrayBtn], Source={x:Static local:Loc.I}}"/>
+        </StackPanel>
+    </StackPanel>
+</Window>

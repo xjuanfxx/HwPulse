@@ -82,6 +82,8 @@ public sealed class FpsMonitor : IDisposable
         catch { return null; } // sin admin o ETW no disponible: el overlay muestra "—"
     }
 
+    private double _latestTs; // marca de tiempo del último Present visto (ms relativos a la sesión)
+
     private void OnEvent(TraceEvent e)
     {
         int id = (int)e.ID;
@@ -90,29 +92,66 @@ public sealed class FpsMonitor : IDisposable
         if (!present) return;
         lock (_lock)
         {
-            if (!_presents.TryGetValue(e.ProcessID, out var list)) _presents[e.ProcessID] = list = new List<double>(256);
-            list.Add(e.TimeStampRelativeMSec);
+            if (!_presents.TryGetValue(e.ProcessID, out var list)) _presents[e.ProcessID] = list = new List<double>(512);
+            double ts = e.TimeStampRelativeMSec;
+            list.Add(ts);
+            if (ts > _latestTs) _latestTs = ts;
         }
     }
 
-    /// <summary>Llamar ~1 vez por segundo. Devuelve FPS y frametime medio del proceso indicado.</summary>
-    public (double? fps, double? frametime, string? name) Sample(int pid)
+    // ETW entrega los eventos en ráfagas (por búferes), no uno a uno: un segundo puede llegar vacío y el
+    // siguiente doble. Por eso se mide sobre una ventana deslizante por marca de tiempo y, si no llega
+    // nada nuevo, se mantiene la última lectura un momento en vez de mostrar "—".
+    private const double WindowMs = 1000, KeepMs = 2000;
+    private static readonly TimeSpan HoldFor = TimeSpan.FromSeconds(2.5);
+    private int _gamePid;                      // último proceso medido (el juego)
+    private (double fps, double ft, string? name) _last;
+    private DateTime _lastAt;
+
+    /// <summary>Llamar ~1 vez por segundo. Devuelve FPS y frametime medio del proceso en primer plano.</summary>
+    public (double? fps, double? frametime, string? name) Sample(int fgPid)
     {
-        List<double>? list;
+        double[]? win = null;
+        int pid = 0;
         lock (_lock)
         {
-            _presents.TryGetValue(pid, out list);
-            // Nos quedamos solo con el último instante del proceso vigilado para que el siguiente
-            // intervalo empiece donde acabó este; el resto se descarta para no acumular memoria.
-            _presents.Clear();
-            if (list is { Count: > 0 }) _presents[pid] = new List<double>(256) { list[^1] };
+            // Descarta lo viejo de todos los procesos para no acumular memoria.
+            double cut = _latestTs - KeepMs;
+            foreach (var key in _presents.Keys.ToList())
+            {
+                var l = _presents[key];
+                int old = 0;
+                while (old < l.Count && l[old] < cut) old++;
+                if (old > 0) l.RemoveRange(0, old);
+                if (l.Count == 0) _presents.Remove(key);
+            }
+            // El juego en primer plano; si ahora mismo no presenta (una notificación, la superposición de
+            // Steam/Epic con el foco), se sigue con el último juego medido mientras siga dibujando.
+            foreach (int cand in new[] { fgPid, _gamePid })
+            {
+                if (cand == 0 || !_presents.TryGetValue(cand, out var l)) continue;
+                double from = l[^1] - WindowMs;
+                int i = l.FindIndex(t => t >= from);
+                if (l.Count - i >= 3 && l[^1] >= _latestTs - KeepMs) { win = l.GetRange(i, l.Count - i).ToArray(); pid = cand; break; }
+            }
         }
-        if (list is null || list.Count < 3) return (null, null, null);
 
-        double span = list[^1] - list[0];
-        if (span <= 0) return (null, null, null);
-        double frametime = span / (list.Count - 1);
-        return (1000.0 / frametime, frametime, NameOf(pid));
+        if (win != null)
+        {
+            double span = win[^1] - win[0];
+            if (span > 0)
+            {
+                double ft = span / (win.Length - 1);
+                _gamePid = pid;
+                _last = (1000.0 / ft, ft, NameOf(pid));
+                _lastAt = DateTime.UtcNow;
+                return _last;
+            }
+        }
+        // Sin eventos nuevos en este ciclo (ráfaga retrasada): se mantiene la última lectura un instante.
+        if (_gamePid != 0 && DateTime.UtcNow - _lastAt < HoldFor) return _last;
+        _gamePid = 0;
+        return (null, null, null);
     }
 
     private string? NameOf(int pid)

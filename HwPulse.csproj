@@ -12,7 +12,15 @@
     <ApplicationManifest Condition="'$(Configuration)' != 'Debug'">app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\HwPulse.ico</ApplicationIcon>
     <AssemblyTitle>HwPulse</AssemblyTitle>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
+    <!-- Metadatos completos en el .exe: un ejecutable sin descripción ni producto parece más sospechoso
+         a la detección heurística de los antivirus. -->
+    <Product>HwPulse</Product>
+    <Description>HwPulse hardware monitor</Description>
+    <Company>xjuanfxx</Company>
+    <Authors>xjuanfxx</Authors>
+    <Copyright>Copyright © 2026 xjuanfxx</Copyright>
+    <NeutralLanguage>en</NeutralLanguage>
   </PropertyGroup>
 
   <!-- Seguridad: no empaquetar DLL nativas que no se usan en Windows (símbolos de TraceEvent y el ayudante

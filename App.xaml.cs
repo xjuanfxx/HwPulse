@@ -75,6 +75,12 @@ public partial class App : Application
         }
 
         _mutex = new Mutex(true, "HwPulse.SingleInstance", out bool created);
+        // Recién actualizada: la instancia anterior aún está cerrándose, se espera a que suelte el mutex.
+        if (!created && args.Contains("--updated"))
+        {
+            try { created = _mutex.WaitOne(TimeSpan.FromSeconds(15)); }
+            catch (AbandonedMutexException) { created = true; }
+        }
         if (!created)
         {
             MessageBox.Show(Loc.T("AlreadyRunning"), "HwPulse");
@@ -109,6 +115,66 @@ public partial class App : Application
         if (renderIdx >= 0 && renderIdx + 1 < args.Length) _renderDir = args[renderIdx + 1];
         _timingFile = args.Contains("--timing") ? Path.Combine(Path.GetTempPath(), "hwpulse-startup.txt") : null;
         _ = StartSensorsAsync(admin);
+        Updater.CleanupOld();
+        if (_renderDir == null) StartUpdateChecks();
+    }
+
+    // ------------------------------------------------------------------ actualizaciones
+    private Updater.Release? _update;
+    private DispatcherTimer? _updateTimer = null; // solo se crea en Release
+
+    /// <summary>Comprueba 20 s después de arrancar y luego cada 6 h (una petición pequeña a la API de GitHub).</summary>
+    private void StartUpdateChecks()
+    {
+#if !DEBUG
+        _updateTimer = new DispatcherTimer(TimeSpan.FromSeconds(20), DispatcherPriority.Background, async (_, _) =>
+        {
+            _updateTimer!.Interval = TimeSpan.FromHours(6);
+            await CheckUpdatesAsync(manual: false);
+        }, Dispatcher);
+#endif
+    }
+
+    private async Task CheckUpdatesAsync(bool manual)
+    {
+        if (manual) _vm.SetUpdateState("UpdateChecking", busy: true);
+        try { _update = await Updater.CheckAsync(_cts.Token); }
+        catch (Exception ex)
+        {
+            if (manual) { ErrorLog.Write("UpdateCheck", ex); _vm.SetUpdateState("UpdateCheckFailed"); }
+            return;
+        }
+        if (_update == null) { if (manual) _vm.SetUpdateState("UpdateLatest"); return; }
+
+        string v = _update.Version.ToString(3);
+        _vm.SetUpdateState("UpdateAvailable", v);
+        if (!manual && _settings.UpdateNotified != v && _tray != null)
+        {
+            _settings.UpdateNotified = v;
+            SaveSoon();
+            _tray.ShowBalloonTip(5000, Loc.T("UpdateNoticeTitle"), Loc.F("UpdateNoticeText", v), WinForms.ToolTipIcon.Info);
+        }
+    }
+
+    /// <summary>Clic en el enlace de actualización: comprobar, o descargar e instalar si ya hay una nueva.</summary>
+    public async void UpdateClicked()
+    {
+        if (_update == null) { await CheckUpdatesAsync(manual: true); return; }
+        // La versión en carpeta (zip) no se puede reemplazar con un solo archivo: se abre la página.
+        if (!Updater.IsSingleFile) { OpenUrl(_update.PageUrl); return; }
+        _vm.SetUpdateState("UpdateDownloading", busy: true);
+        try
+        {
+            await Updater.InstallAsync(_update, _cts.Token);
+            bool minimized = _main == null || !_main.IsVisible;
+            Updater.Relaunch(minimized);
+            ExitApp();
+        }
+        catch (Exception ex)
+        {
+            ErrorLog.Write("UpdateInstall", ex);
+            _vm.SetUpdateState("UpdateFailed");
+        }
     }
 
     // ------------------------------------------------------------------ panel web
@@ -469,8 +535,16 @@ public partial class App : Application
     {
         if (_main == null) return;
         _main.Show();
-        if (_main.WindowState == WindowState.Minimized) _main.WindowState = WindowState.Normal;
+        if (_main.WindowState == WindowState.Minimized) _main.WindowState = _main.RestoreState;
         _main.Activate();
+    }
+
+    /// <summary>Qué hace la X de la ventana: "ask", "tray" o "exit".</summary>
+    public string CloseAction
+    {
+        get => _settings.CloseAction;
+        set => _vm.SetCloseAction(value); // también actualiza la opción en Ajustes y guarda
+
     }
 
     public void NotifyHiddenToTray()
@@ -550,6 +624,7 @@ public partial class App : Application
         }
         if (_tray != null) { _tray.Visible = false; _tray.Dispose(); }
         _saveTimer?.Stop();
+        _updateTimer?.Stop();
         _settings.Save();
         _overlay?.Close();
         _main?.Close();

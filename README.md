@@ -14,7 +14,9 @@ It has a compact desktop window, a click-through in-game overlay and a local web
   Shortcuts: `Ctrl+Shift+F10` shows or hides it; `Ctrl+Shift+F11` moves it to the next corner.
 - Web dashboard over SSE on `localhost`, optionally on your LAN with a QR code.
 - CPU/GPU accent colors follow the vendor (Intel, AMD, NVIDIA).
-- Goes to the tray when closed and uses about 0.3% CPU there.
+- Minimizes to the tray; the close button asks whether to keep it in the tray or exit. Uses about 0.3% CPU in the tray.
+- Optional start with Windows (scheduled task, starts in the tray).
+- Updates itself from GitHub Releases (checksum verified).
 
 ## Requirements
 
@@ -27,6 +29,8 @@ It has a compact desktop window, a click-through in-game overlay and a local web
 ```powershell
 dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:PublishReadyToRun=true -o publish
 ```
+
+Releases are built by GitHub Actions: bump `<Version>` in `HwPulse.csproj`, then push a tag such as `v0.1.2`.
 
 Debug builds run without elevation (`app.dev.manifest`). For UI work, add `--no-elevate`.
 

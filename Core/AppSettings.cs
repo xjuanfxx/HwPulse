@@ -55,6 +55,12 @@ public sealed class AppSettings
     public bool WebLan { get; set; }
     public int WebPort { get; set; } = 8086;
 
+    /// <summary>Botón X de la ventana: "ask" (preguntar), "tray" o "exit".</summary>
+    public string CloseAction { get; set; } = "ask";
+
+    /// <summary>Última versión de la que ya se avisó en la bandeja (para no repetir el aviso).</summary>
+    public string? UpdateNotified { get; set; }
+
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "HwPulse", "settings.json");
 
@@ -86,6 +92,7 @@ public sealed class AppSettings
         if (s.ChartRange is not (60 or 300 or 600)) s.ChartRange = 300;
         if (s.Language is not ("en" or "es")) s.Language = "en";
         if (s.OverlayStyle is not ("panel" or "compact")) s.OverlayStyle = "compact";
+        if (s.CloseAction is not ("ask" or "tray" or "exit")) s.CloseAction = "ask";
         if (!Enum.IsDefined(s.Corner)) s.Corner = OverlayCorner.TopCenter;
         s.OverlayItems = (s.OverlayItems ?? new()).Where(OverlayItemKeys.Contains).Distinct().ToList();
         s.OverlayColors = (s.OverlayColors ?? new())

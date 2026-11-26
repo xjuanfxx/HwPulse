@@ -51,7 +51,7 @@ public sealed partial class MainViewModel
     {
         foreach (var r in s.AllSensors)
         {
-            if (r.Type != SensorType.Temperature || r.Name.Contains("Distance", StringComparison.OrdinalIgnoreCase)) continue;
+            if (r.Type != SensorType.Temperature || IsLimit(r.Name)) continue;
             if (!_tempChoices.TryGetValue(r.Key, out var c))
             {
                 c = new TempChoice(r.Key, OnTempChoiceChanged);
@@ -68,6 +68,14 @@ public sealed partial class MainViewModel
             c.Refresh();
         }
     }
+
+    /// <summary>Umbrales fijos (aviso/crítico de NVMe, distancia a TjMax): no son temperaturas reales.</summary>
+    private static bool IsLimit(string name) =>
+        name.Contains("Distance", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("Warning", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("Critical", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("Threshold", StringComparison.OrdinalIgnoreCase) ||
+        name.Contains("Limit", StringComparison.OrdinalIgnoreCase);
 
     private static int Compare(TempChoice a, TempChoice b) =>
         a.GroupOrder != b.GroupOrder ? a.GroupOrder.CompareTo(b.GroupOrder)

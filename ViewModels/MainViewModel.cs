@@ -96,7 +96,7 @@ public sealed class SensorGroup : Observable
     public ObservableCollection<SensorRow> Rows { get; } = new();
     public Visibility Visibility { get; private set; } = Visibility.Visible;
 
-    private bool _expanded = true;
+    private bool _expanded; // colapsados al inicio: la página abre corta y no actualiza filas ocultas
     /// <summary>Colapsar un componente oculta sus filas (y deja de actualizarlas en pantalla).</summary>
     public bool IsExpanded
     {

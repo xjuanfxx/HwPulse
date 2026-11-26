@@ -39,11 +39,21 @@ public partial class MainWindow : Window
         StateChanged += (_, _) =>
         {
             Root.Margin = WindowState == WindowState.Maximized ? new Thickness(7) : new Thickness(0);
+            if (WindowState == WindowState.Minimized)
+            {
+                // Minimizar la manda a la bandeja (sin botón en la barra de tareas).
+                Hide();
+                CurrentApp.NotifyHiddenToTray();
+            }
+            else RestoreState = WindowState;
             UpdateUiVisible();
         };
         // Oculta en la bandeja o minimizada: el modelo deja de calcular lo que solo se ve aquí.
         IsVisibleChanged += (_, _) => UpdateUiVisible();
     }
+
+    /// <summary>Estado al que vuelve desde la bandeja (normal o maximizada).</summary>
+    public WindowState RestoreState { get; private set; } = WindowState.Normal;
 
     private static App CurrentApp => (App)Application.Current;
 
@@ -102,18 +112,31 @@ public partial class MainWindow : Window
 
     private void OpenWeb_Click(object sender, RoutedEventArgs e) => CurrentApp.OpenWeb();
 
+    private void Update_Click(object sender, RoutedEventArgs e) => CurrentApp.UpdateClicked();
+
     private void OverlayQuick_Click(object sender, RoutedEventArgs e) => _vm.OverlayVisible = !_vm.OverlayVisible;
     private void Minimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
     private void Maximize_Click(object sender, RoutedEventArgs e) =>
         WindowState = WindowState == WindowState.Maximized ? WindowState.Normal : WindowState.Maximized;
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
 
-    /// <summary>Cerrar la ventana la manda a la bandeja; "Salir" está en el menú del icono.</summary>
+    /// <summary>La X pregunta (o hace lo recordado): bandeja o salir del todo.</summary>
     protected override void OnClosing(CancelEventArgs e)
     {
         if (!CurrentApp.IsExiting)
         {
             e.Cancel = true;
+            string action = CurrentApp.CloseAction;
+            if (action == "ask")
+            {
+                var dlg = new CloseDialog { Owner = this };
+                dlg.ShowDialog();
+                if (dlg.Choice == null) return; // cancelado: la ventana sigue abierta
+                action = dlg.Choice;
+                if (dlg.RememberChoice) CurrentApp.CloseAction = action;
+            }
+            // Diferido: ExitApp cierra esta ventana, y no se puede llamar a Close() dentro de OnClosing.
+            if (action == "exit") { Dispatcher.BeginInvoke(CurrentApp.ExitApp); return; }
             Hide();
             CurrentApp.NotifyHiddenToTray();
         }

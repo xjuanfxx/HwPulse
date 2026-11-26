@@ -1,4 +1,4 @@
-# Genera Assets/HwPulse.ico (16–256 px) dibujando el logo: cuadrado redondeado oscuro con la línea de pulso.
+﻿# Genera Assets/HwPulse.ico (16–256 px) dibujando el logo: cuadrado redondeado oscuro con la línea de pulso.
 # Uso: pwsh -File tools/make-icon.ps1
 Add-Type -AssemblyName System.Drawing
 
@@ -41,13 +41,34 @@ foreach ($s in $sizes) {
     $g.Dispose()
 
     $ms = New-Object System.IO.MemoryStream
-    $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+    if ($s -ge 256) {
+        # 256 px en PNG (ocupa poco y Windows lo admite a ese tamaño)
+        $bmp.Save($ms, [System.Drawing.Imaging.ImageFormat]::Png)
+    } else {
+        # Tamaños pequeños como DIB de 32 bits (BMP sin cabecera de archivo): es lo que esperan el
+        # Explorador, la barra de tareas y los accesos directos; con PNG algunos muestran el icono genérico.
+        $w = New-Object System.IO.BinaryWriter $ms
+        $w.Write([uint32]40); $w.Write([int32]$s); $w.Write([int32]($s * 2))   # alto doble: imagen + máscara
+        $w.Write([uint16]1); $w.Write([uint16]32); $w.Write([uint32]0); $w.Write([uint32]0)
+        $w.Write([int32]0); $w.Write([int32]0); $w.Write([uint32]0); $w.Write([uint32]0)
+        $rect = New-Object System.Drawing.Rectangle 0, 0, $s, $s
+        $data = $bmp.LockBits($rect, [System.Drawing.Imaging.ImageLockMode]::ReadOnly, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+        $row = New-Object byte[] ($s * 4)
+        for ($y = $s - 1; $y -ge 0; $y--) {   # de abajo arriba
+            [System.Runtime.InteropServices.Marshal]::Copy([IntPtr]($data.Scan0.ToInt64() + $y * $data.Stride), $row, 0, $s * 4)
+            $w.Write($row)
+        }
+        $bmp.UnlockBits($data)
+        $maskRow = [int]([math]::Ceiling($s / 32.0) * 4)                  # máscara AND vacía (manda el canal alfa)
+        $w.Write((New-Object byte[] ($maskRow * $s)))
+        $w.Flush()
+    }
     $pngs += , $ms.ToArray()
     if ($s -eq 256) { $bmp.Save((Join-Path (Split-Path $out) "HwPulse-256.png"), [System.Drawing.Imaging.ImageFormat]::Png) }
     $bmp.Dispose()
 }
 
-# Empaquetar como ICO con imágenes PNG (formato válido desde Windows Vista)
+# Empaquetar como ICO: DIB hasta 128 px y PNG en 256 px
 $fs = [System.IO.File]::Create($out)
 $bw = New-Object System.IO.BinaryWriter $fs
 $bw.Write([uint16]0); $bw.Write([uint16]1); $bw.Write([uint16]$sizes.Count)
