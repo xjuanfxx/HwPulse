@@ -33,26 +33,49 @@ public partial class CloseDialog : Window
         Native.StyleWindowFrame(new WindowInteropHelper(this).Handle, 0x00262626);
     }
 
-    /// <summary>Encoge la ventana al tamaño exacto del contenido (el cliente que WPF cree tener
-    /// desde el principio) manteniéndola centrada donde estaba.</summary>
+    /// <summary>
+    /// Encoge la ventana al tamaño exacto del contenido y la centra sobre la ventana principal.
+    /// No se puede fiar de CenterOwner: WPF calcula la posición con el tamaño que incluye el marco
+    /// fantasma (y en coordenadas que no cuadran con el DPI real), así que el diálogo quedaba
+    /// desplazado a la izquierda o incluso medio fuera de la ventana. Todo se hace en píxeles físicos.
+    /// </summary>
     private void FixFrame(object sender, RoutedEventArgs e)
     {
         var target = PresentationSource.FromVisual(this)?.CompositionTarget;
         var hwnd = new WindowInteropHelper(this).Handle;
-        if (target == null || !GetWindowRect(hwnd, out var r)) return;
+        if (target == null || hwnd == IntPtr.Zero) return;
 
         var m = target.TransformToDevice;
         int w = (int)Math.Ceiling(Root.ActualWidth * m.M11);
         int h = (int)Math.Ceiling(Root.ActualHeight * m.M22);
+        if (w <= 0 || h <= 0) return;
 
-        int dx = (r.Right - r.Left - w) / 2, dy = (r.Bottom - r.Top - h) / 2;
-        if (dx <= 0 && dy <= 0) return; // sin franja que recortar
+        // Rectángulo de referencia: la ventana dueña si está visible; si no, el monitor del diálogo.
+        var owner = Owner is { IsVisible: true, WindowState: not WindowState.Minimized }
+            ? new WindowInteropHelper(Owner).Handle : IntPtr.Zero;
+        var area = WorkArea(owner != IntPtr.Zero ? owner : hwnd);
+        RECT refRect = owner != IntPtr.Zero && GetWindowRect(owner, out var o) ? o : area;
+
+        int x = refRect.Left + (refRect.Right - refRect.Left - w) / 2;
+        int y = refRect.Top + (refRect.Bottom - refRect.Top - h) / 2;
+        // Que nunca quede fuera de la pantalla (ventana principal pegada a un borde o medio fuera).
+        x = Math.Clamp(x, area.Left, Math.Max(area.Left, area.Right - w));
+        y = Math.Clamp(y, area.Top, Math.Max(area.Top, area.Bottom - h));
+
         // Con SizeToContent activo, WPF re-impone su tamaño (con el marco fantasma) al procesar el WM_SIZE
         // del encogido: hay que apagarlo ANTES de tocar la ventana nativa. El contenido de este diálogo es
         // fijo tras cargar, así que la medición automática ya no hace falta.
         SizeToContent = SizeToContent.Manual;
-        // SWP_NOZORDER: solo tamaño y posición, re-centrada sobre el dueño
-        Native.SetWindowPos(hwnd, IntPtr.Zero, r.Left + Math.Max(dx, 0), r.Top + Math.Max(dy, 0), w, h, 0x0004);
+        Native.SetWindowPos(hwnd, IntPtr.Zero, x, y, w, h, 0x0004); // SWP_NOZORDER
+    }
+
+    /// <summary>Área de trabajo (sin barra de tareas) del monitor donde está la ventana, en píxeles físicos.</summary>
+    private static RECT WorkArea(IntPtr hwnd)
+    {
+        var mon = MonitorFromWindow(hwnd, 2); // MONITOR_DEFAULTTONEAREST
+        var info = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+        if (mon != IntPtr.Zero && GetMonitorInfo(mon, ref info)) return info.rcWork;
+        return new RECT { Left = 0, Top = 0, Right = (int)SystemParameters.PrimaryScreenWidth, Bottom = (int)SystemParameters.PrimaryScreenHeight };
     }
 
     private void Tray_Click(object sender, RoutedEventArgs e) { Choice = "tray"; Close(); }
@@ -63,6 +86,16 @@ public partial class CloseDialog : Window
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetWindowRect(IntPtr hWnd, out RECT rect);
 
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO info);
+
     [StructLayout(LayoutKind.Sequential)]
     private struct RECT { public int Left, Top, Right, Bottom; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MONITORINFO { public int cbSize; public RECT rcMonitor; public RECT rcWork; public int dwFlags; }
 }

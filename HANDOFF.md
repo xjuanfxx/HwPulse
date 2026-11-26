@@ -1,6 +1,6 @@
 # HwPulse: handoff notes
 
-Status snapshot so another developer or AI agent can pick up the work. Last updated 2026-11-26 (evening), after the optimization/stability pass and the UI polish round.
+Status snapshot so another developer or AI agent can pick up the work. Last updated 2026-11-27, after fixing the off-center close dialog (on top of the 2026-11-26 optimization/stability pass and UI polish round).
 
 ## What it is
 HwPulse is a Windows hardware monitor.
@@ -71,6 +71,8 @@ A full audit (architecture, leaks, RAM, threads) drove three rounds of changes. 
 - **Close dialog (redesigned):** real 40 px header with the title and a **visible X to cancel** (Choice stays null), DWM shadow without transparency (`GlassFrameThickness=-1`), body on Surface with themed buttons/checkbox (no more `Margin="-8"` hack), themed focus rings, focus given at `ContentRendered` (focus at `Loaded` is lost when the window activates).
 - **Phantom frame fix (the "L" stripe the user saw):** `SizeToContent` + `WindowChrome` makes WPF size the window including a frame that no longer exists; the leftover shows the DWM frame fill (#2B2B2B). `CloseDialog.FixFrame` (at `Loaded`) switches `SizeToContent = Manual` BEFORE `SetWindowPos` — order matters, WPF reverts external resizes while SizeToContent is on — then shrinks the native window to the exact content size, re-centered. Pixel-verified at 125% DPI: 475×227, bottom/right rows are Surface #111111, focus ring present.
 
+- **Close dialog off-center (fixed 2026-11-27):** the dialog opened shifted left, sometimes half outside the main window. Cause: `FixFrame` re-centered relative to the position WPF had picked via `CenterOwner`, and WPF computes that position with the phantom-frame size. `FixFrame` now centers explicitly on the owner's `GetWindowRect`, in physical pixels, and clamps to the monitor work area (`MonitorFromWindow`/`GetMonitorInfo`). If the owner is hidden or minimized, it centers on the monitor instead. Measured: center offset 0,0 in a normal window and with the main window half off-screen (dialog clamped inside).
+
 ### How all of this was verified
 - `dotnet build` 0 errors / 0 warnings after every step.
 - `--render` smoke test: 32 PNGs (en+es, all pages, 6 overlay captures, colors), clean exit, zero new `errors.log` entries.
@@ -112,6 +114,7 @@ A full audit (architecture, leaks, RAM, threads) drove three rounds of changes. 
 ## Gotchas for the next AI (hard-won, don't relearn these)
 1. **Never `InvariantGlobalization` in a WPF app.** Bindings resolve `xml:lang` to a concrete culture at layout time; without ICU every formatting binding throws `XamlParseException` inside `Window.Show()`, `ErrorLog` swallows it (`e.Handled = true`), and you get a **process alive with no window**. Check `%AppData%\HwPulse\errors.log` first when "the app doesn't open".
 2. **`SizeToContent` + `WindowChrome` leaves a phantom frame**: WPF sizes the window including the removed frame. With `GlassFrameThickness=-1` (DWM shadow) the leftover shows as a #2B2B2B "L" stripe. Fix pattern: `SizeToContent = Manual` **before** `SetWindowPos` to the content size (external resizes are reverted while SizeToContent is on). See `CloseDialog.FixFrame`.
+2b. **Don't trust `CenterOwner` together with `SizeToContent` + `WindowChrome`**: WPF places the window using the size that includes the phantom frame. Center the window yourself in physical pixels after shrinking it (see `CloseDialog.FixFrame`).
 3. **Focus given at `Loaded` is lost** when the window activates; use `ContentRendered`.
 4. **Detached visuals never measured**: the overlay's `_source` only gets measured in `OverlayWindow.Render()`, which early-returns while hidden. Anything capturing it must force a layout (`RenderNow`/measure) or it measures 0.
 5. **`--render` never exits if `RenderScreenshots` throws**: the exception unwinds into PollLoop's catch, `ExitApp()` is skipped, and the app keeps running with the window open. Symptom: missing PNG + process alive.
