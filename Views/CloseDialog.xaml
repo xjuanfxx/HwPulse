@@ -4,25 +4,135 @@
         xmlns:local="clr-namespace:HwPulse"
         Title="HwPulse" SizeToContent="WidthAndHeight" ResizeMode="NoResize" ShowInTaskbar="False"
         WindowStartupLocation="CenterOwner"
-        Background="{StaticResource Bg}" Foreground="{StaticResource Text}"
+        Background="{StaticResource Surface}" Foreground="{StaticResource Text}"
         FontFamily="{StaticResource UiFont}" FontSize="12"
-        TextOptions.TextFormattingMode="Ideal" TextOptions.TextRenderingMode="ClearType" UseLayoutRounding="True">
+        TextOptions.TextFormattingMode="Ideal" TextOptions.TextRenderingMode="ClearType" UseLayoutRounding="True" SnapsToDevicePixels="True">
     <WindowChrome.WindowChrome>
-        <WindowChrome CaptionHeight="40" ResizeBorderThickness="0" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False"/>
+        <!-- GlassFrameThickness -1 extiende la hoja DWM a toda la ventana y devuelve la sombra nativa
+             sin transparencia: el contenido WPF (opaco) la cubre por completo y el DWM sigue dibujando
+             sombra, borde del tema y esquinas redondeadas. Es el patrón recomendado por WindowChrome. -->
+        <WindowChrome CaptionHeight="40" ResizeBorderThickness="0" GlassFrameThickness="-1" CornerRadius="0" UseAeroCaptionButtons="False"/>
     </WindowChrome.WindowChrome>
+
     <Window.Resources>
-        <!-- Botón principal: mismo molde que SmallButton, relleno con el color de acento -->
-        <Style x:Key="PrimaryButton" TargetType="Button" BasedOn="{StaticResource SmallButton}">
-            <Setter Property="Foreground" Value="White"/>
+        <!-- X de cancelar: mismo molde que el botón de cerrar de la ventana principal, a la medida de la cabecera -->
+        <Style x:Key="HeaderClose" TargetType="Button">
+            <Setter Property="Width" Value="46"/>
+            <Setter Property="Height" Value="40"/>
+            <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="WindowChrome.IsHitTestVisibleInChrome" Value="True"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="b" Background="{StaticResource Accent}" CornerRadius="6" Padding="14,6">
+                        <Border x:Name="b" Background="{TemplateBinding Background}">
+                            <Path Data="{Binding Tag, RelativeSource={RelativeSource TemplatedParent}}" Stroke="{TemplateBinding Foreground}"
+                                  StrokeThickness="1" Width="10" Height="10" SnapsToDevicePixels="True"
+                                  HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="b" Property="Background" Value="#C42B1C"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter Property="Foreground" Value="{StaticResource TextStrong}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Casilla "recordar": misma caja que CheckRow, pero sin el padding interior que obligaba al Margin -8;
+             la caja queda alineada con el borde izquierdo del texto del cuerpo. -->
+        <Style x:Key="DialogCheck" TargetType="CheckBox">
+            <Setter Property="Foreground" Value="{StaticResource Text}"/>
+            <Setter Property="FontWeight" Value="Medium"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="CheckBox">
+                        <Border x:Name="row" Background="Transparent" CornerRadius="6" Padding="0,6,10,6">
+                            <DockPanel>
+                                <Border x:Name="box" Width="16" Height="16" CornerRadius="4" BorderThickness="1.5"
+                                        BorderBrush="{StaticResource LineStrong}" Background="{StaticResource Bg}" Margin="0,0,10,0" VerticalAlignment="Center">
+                                    <Path x:Name="tick" Data="M3,8 L6.5,11.5 L13,4.5" Stroke="White" StrokeThickness="2"
+                                          StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                          Width="16" Height="16" Margin="-1.5" Visibility="Collapsed"/>
+                                </Border>
+                                <ContentPresenter VerticalAlignment="Center"/>
+                            </DockPanel>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="row" Property="Background" Value="{StaticResource Hover}"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="row" Property="Background" Value="{StaticResource Hover}"/>
+                            </Trigger>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="box" Property="Background" Value="{StaticResource Accent}"/>
+                                <Setter TargetName="box" Property="BorderBrush" Value="{StaticResource Accent}"/>
+                                <Setter TargetName="tick" Property="Visibility" Value="Visible"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Salir: molde del SmallButton + anillo de foco con el acento (mismo patrón que el SearchBox) -->
+        <Style x:Key="DialogSecondary" TargetType="Button">
+            <Setter Property="Foreground" Value="{StaticResource Text}"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="b" Background="{StaticResource SurfaceAlt}" BorderBrush="{StaticResource LineStrong}" BorderThickness="1"
+                                CornerRadius="6" Padding="12,5">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="b" Property="Background" Value="{StaticResource Hover}"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="b" Property="BorderBrush" Value="{StaticResource Accent}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Mandar a la bandeja (recomendado): relleno con el acento, hover atenuado y anillo de foco claro -->
+        <Style x:Key="DialogPrimary" TargetType="Button">
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="FontSize" Value="12"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="b" Background="{StaticResource Accent}" BorderBrush="Transparent" BorderThickness="1"
+                                CornerRadius="6" Padding="14,5">
                             <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter TargetName="b" Property="Opacity" Value="0.88"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="b" Property="BorderBrush" Value="{StaticResource TextStrong}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -31,17 +141,38 @@
         </Style>
     </Window.Resources>
 
-    <StackPanel Margin="22,18,22,18" Width="360">
-        <TextBlock FontSize="15" FontWeight="SemiBold" Text="{Binding [CloseTitle], Source={x:Static local:Loc.I}}"/>
-        <TextBlock Style="{StaticResource Hint}" Margin="0,6,0,0" TextWrapping="Wrap" Text="{Binding [CloseText], Source={x:Static local:Loc.I}}"/>
-        <CheckBox x:Name="Remember" Style="{StaticResource CheckRow}" Margin="-8,12,0,0" HorizontalAlignment="Left">
-            <TextBlock Text="{Binding [CloseRemember], Source={x:Static local:Loc.I}}"/>
-        </CheckBox>
-        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
-            <Button Style="{StaticResource SmallButton}" Click="Exit_Click" Margin="0,0,8,0"
-                    Content="{Binding [CloseExitBtn], Source={x:Static local:Loc.I}}"/>
-            <Button x:Name="TrayBtn" Style="{StaticResource PrimaryButton}" Click="Tray_Click" IsDefault="True"
-                    Content="{Binding [CloseToTrayBtn], Source={x:Static local:Loc.I}}"/>
+    <!-- Diálogo como panel elevado: banda de cabecera oscura (zona de arrastre), separador fino y cuerpo en Surface.
+         El fondo es opaco, así que WPF puede usar ClearType. -->
+    <Grid Width="380" RenderOptions.ClearTypeHint="Enabled">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="40"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Cabecera (CaptionHeight 40): título visible a la izquierda y X para cancelar a la derecha -->
+        <Border Grid.Row="0" Background="{StaticResource Bg}">
+            <Grid>
+                <TextBlock Text="{Binding [CloseTitle], Source={x:Static local:Loc.I}}" FontSize="13" FontWeight="Bold"
+                           Foreground="{StaticResource TextStrong}" VerticalAlignment="Center" Margin="18,0,52,0"/>
+                <Button Style="{StaticResource HeaderClose}" Tag="{StaticResource IcClose}" Click="Cancel_Click"
+                        HorizontalAlignment="Right" VerticalAlignment="Top"/>
+            </Grid>
+        </Border>
+
+        <Border Grid.Row="1" Height="1" Background="{StaticResource Line}"/>
+
+        <StackPanel Grid.Row="2" Margin="18,14,18,16">
+            <TextBlock FontSize="12" FontWeight="Medium" Foreground="{StaticResource Muted}" TextWrapping="Wrap"
+                       Text="{Binding [CloseText], Source={x:Static local:Loc.I}}"/>
+            <CheckBox x:Name="Remember" Style="{StaticResource DialogCheck}" Margin="0,12,0,0" HorizontalAlignment="Left"
+                      Content="{Binding [CloseRemember], Source={x:Static local:Loc.I}}"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+                <Button Style="{StaticResource DialogSecondary}" Click="Exit_Click" Margin="0,0,8,0"
+                        Content="{Binding [CloseExitBtn], Source={x:Static local:Loc.I}}"/>
+                <Button x:Name="TrayBtn" Style="{StaticResource DialogPrimary}" Click="Tray_Click" IsDefault="True"
+                        Content="{Binding [CloseToTrayBtn], Source={x:Static local:Loc.I}}"/>
+            </StackPanel>
         </StackPanel>
-    </StackPanel>
+    </Grid>
 </Window>
