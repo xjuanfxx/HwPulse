@@ -15,12 +15,16 @@ public sealed class GpuProcessMonitor
 
     private PerformanceCounterCategory? _engines, _memory;
     private Dictionary<string, CounterSample> _prev = new();
-    private bool _broken;
+
+    // Un fallo puntual (contadores de rendimiento reconstruyéndose, driver de GPU reiniciado) ya no
+    // apaga la lista para toda la sesión: se reintenta con espera creciente (30 s, 1, 2, 4… hasta 10 min).
+    private int _failures;
+    private DateTime _retryAt = DateTime.MinValue;
 
     public Dictionary<int, (double pct, long dedicated)> Sample()
     {
         var result = new Dictionary<int, (double pct, long dedicated)>();
-        if (_broken) return result;
+        if (DateTime.UtcNow < _retryAt) return result;
         try
         {
             _engines ??= new PerformanceCounterCategory("GPU Engine");
@@ -63,7 +67,15 @@ public sealed class GpuProcessMonitor
                 }
             }
         }
-        catch { _broken = true; } // contadores no disponibles en este equipo: la lista de GPU queda vacía
+        catch (Exception ex)
+        {
+            if (_failures++ == 0) ErrorLog.Write("GpuProcessMonitor", ex); // solo el primero, sin spam
+            double wait = Math.Min(600, 30 * Math.Pow(2, Math.Min(_failures - 1, 5)));
+            _retryAt = DateTime.UtcNow.AddSeconds(wait);
+            _engines = null; _memory = null; _prev = new(); // reabrir las categorías en el reintento
+            return result;
+        }
+        _failures = 0;
         return result;
     }
 }

@@ -967,7 +967,7 @@
                                                     </Button.Template>
                                                 </Button>
                                             </StackPanel>
-                                            <CheckBox Style="{StaticResource Switch}" IsChecked="{Binding StartWithWindows}" VerticalAlignment="Center"/>
+                                            <CheckBox Style="{StaticResource Switch}" IsChecked="{Binding StartWithWindows}" IsEnabled="{Binding StartWithWindowsEnabled}" VerticalAlignment="Center"/>
                                             <StackPanel Margin="10,0,8,0" VerticalAlignment="Center">
                                                 <TextBlock Style="{StaticResource Body}" Text="{Binding [StartWithWindows], Source={x:Static local:Loc.I}}"/>
                                                 <TextBlock Style="{StaticResource Hint}" Text="{Binding [StartWithWindowsHint], Source={x:Static local:Loc.I}}" Margin="0,2,0,0"/>

@@ -581,8 +581,27 @@ public sealed partial class MainViewModel : Observable
             // Solo se refrescan las filas que se pueden ver: página Sensores abierta y componente expandido.
             if (CurrentPage == "Sensors" && _sensorGroups[r.Hardware].IsExpanded) row.Update(r);
         }
-        if (added) ApplyFilter();
+        // Hardware que desapareció (USB desconectado, disco expulsado): fuera sus filas y su grupo,
+        // en vez de dejarlas congeladas con el último valor. Solo se mira cuando cambia el número de sensores.
+        bool removed = _sensorRows.Count != s.AllSensors.Count && RemoveMissingSensors(s);
+        if (added || removed) ApplyFilter();
         else SensorCountText = Loc.F("SensorCount", _visibleSensors);
+    }
+
+    private bool RemoveMissingSensors(Snapshot s)
+    {
+        var alive = new HashSet<string>(s.AllSensors.Count);
+        foreach (var r in s.AllSensors) alive.Add(r.Key);
+        var gone = _sensorRows.Keys.Where(k => !alive.Contains(k)).ToList();
+        foreach (var key in gone)
+        {
+            var row = _sensorRows[key];
+            _sensorRows.Remove(key);
+            if (!_sensorGroups.TryGetValue(row.Hardware, out var g)) continue;
+            g.Rows.Remove(row);
+            if (g.Rows.Count == 0) { _sensorGroups.Remove(row.Hardware); SensorGroups.Remove(g); }
+        }
+        return gone.Count > 0;
     }
 
     private int _visibleSensors;

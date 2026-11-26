@@ -50,6 +50,7 @@ public sealed class MultiChart : FrameworkElement
     private readonly double[][] _slot = new double[3][];
     private readonly int[] _slotLen = new int[3];
     private readonly Brush?[] _slotBrush = new Brush?[3];
+    private readonly FormattedText[] _yLabels = new FormattedText[5];
 
     protected override void OnRender(DrawingContext dc)
     {
@@ -83,10 +84,14 @@ public sealed class MultiChart : FrameworkElement
         double range = Math.Max(max - min, 1e-9);
 
         // El margen izquierdo se ajusta a la etiqueta más ancha del eje Y.
-        var yLabels = Enumerable.Range(0, 5)
-            .Select(i => Text(string.Format(CultureInfo.InvariantCulture, LabelFormat, min + range * i / 4.0), dip))
-            .ToArray();
-        double left = ShowAxes ? Math.Ceiling(yLabels.Max(l => l.Width)) + 10 : 0;
+        double widest = 0;
+        for (int i = 0; i < 5; i++)
+        {
+            var ft = Text(string.Format(CultureInfo.InvariantCulture, LabelFormat, min + range * i / 4.0), dip);
+            _yLabels[i] = ft;
+            if (ft.Width > widest) widest = ft.Width;
+        }
+        double left = ShowAxes ? Math.Ceiling(widest) + 10 : 0;
         double bottom = ShowAxes ? 16 : 0, top = ShowAxes ? 6 : 0;
         double pw = w - left, ph = h - bottom - top;
 
@@ -99,7 +104,7 @@ public sealed class MultiChart : FrameworkElement
             dc.DrawLine(GridPen, new Point(left, y), new Point(w, y));
             if (ShowAxes)
             {
-                var ft = yLabels[i];
+                var ft = _yLabels[i];
                 dc.DrawText(ft, new Point(left - 6 - ft.Width, y - ft.Height / 2));
             }
         }
@@ -240,8 +245,18 @@ public sealed class MultiChart : FrameworkElement
         }
     }
 
-    private static FormattedText Text(string s, double dip) =>
-        new(s, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, LabelFace, 10, LabelBrush, dip);
+    // Las etiquetas de los ejes casi nunca cambian entre un render y el siguiente ("0%", "25%", "-59 s"…):
+    // se guardan por texto en vez de construir 8 FormattedText (con su medición de glifos) cada segundo.
+    private readonly Dictionary<string, FormattedText> _labels = new();
+    private double _labelsDip;
+
+    private FormattedText Text(string s, double dip)
+    {
+        if (dip != _labelsDip || _labels.Count > 64) { _labels.Clear(); _labelsDip = dip; } // otro DPI o rango nuevo
+        if (!_labels.TryGetValue(s, out var ft))
+            _labels[s] = ft = new(s, CultureInfo.InvariantCulture, FlowDirection.LeftToRight, LabelFace, 10, LabelBrush, dip);
+        return ft;
+    }
 
     private static double NiceCeiling(double v)
     {

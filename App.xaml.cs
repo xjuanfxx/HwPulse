@@ -708,7 +708,14 @@ public partial class App : Application
             Native.UnregisterHotKey(_hotkeys.Handle, HotkeyCorner);
             _hotkeys.Dispose();
         }
-        if (_tray != null) { _tray.Visible = false; _tray.Dispose(); }
+        if (_tray != null)
+        {
+            _tray.Visible = false;
+            var trayIcon = _tray.Icon;
+            _tray.Dispose();
+            // El icono propio es un HICON nuestro; el de reserva (SystemIcons) es compartido y no se libera.
+            if (trayIcon != null && !ReferenceEquals(trayIcon, System.Drawing.SystemIcons.Application)) trayIcon.Dispose();
+        }
         _saveTimer?.Stop();
         _updateTimer?.Stop();
         _settings.Save();

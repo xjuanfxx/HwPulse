@@ -47,11 +47,28 @@ public sealed partial class MainViewModel
         TempChoices.Count == 0 ? System.Windows.Visibility.Visible : System.Windows.Visibility.Collapsed;
     public Action? TempSelectionChanged;
 
+    private int _tempDescribeSig;
+
+    /// <summary>Lo que cambia los nombres de las temperaturas: el idioma y los nombres cortos de los discos
+    /// (llegan en la segunda fase de carga). Si nada de eso cambia, no se recalculan cada segundo.</summary>
+    private static int DescribeSignature(Snapshot s)
+    {
+        var h = new HashCode();
+        h.Add(Loc.I.Lang); h.Add(s.CpuName); h.Add(s.GpuName);
+        foreach (var d in s.Disks) { h.Add(d.Key); h.Add(d.Short); h.Add(d.Name); }
+        return h.ToHashCode();
+    }
+
     private void UpdateTempChoices(Snapshot s)
     {
+        int sig = DescribeSignature(s);
+        bool redescribe = sig != _tempDescribeSig;
+        _tempDescribeSig = sig;
+        int seen = 0;
         foreach (var r in s.AllSensors)
         {
             if (r.Type != SensorType.Temperature || IsLimit(r.Name)) continue;
+            seen++;
             if (!_tempChoices.TryGetValue(r.Key, out var c))
             {
                 c = new TempChoice(r.Key, OnTempChoiceChanged);
@@ -63,9 +80,22 @@ public sealed partial class MainViewModel
                 while (i < TempChoices.Count && Compare(TempChoices[i], c) <= 0) i++;
                 TempChoices.Insert(i, c);
             }
-            else Describe(c, r, s); // vuelve a calcular el nombre (por si cambió el idioma)
+            else if (redescribe) Describe(c, r, s); // idioma o discos cambiaron: recalcular nombres
             c.Value = r.Value;
             c.Refresh();
+        }
+        // Temperaturas de hardware que ya no está: fuera de la lista (la selección guardada se conserva,
+        // así que si el disco vuelve, vuelve marcado como estaba).
+        // Solo se comprueba cuando en esta lectura hubo menos temperaturas que opciones en la lista.
+        if (seen < _tempChoices.Count)
+        {
+            var alive = s.AllSensors.Select(x => x.Key).ToHashSet();
+            for (int i = TempChoices.Count - 1; i >= 0; i--)
+            {
+                if (alive.Contains(TempChoices[i].Key)) continue;
+                _tempChoices.Remove(TempChoices[i].Key);
+                TempChoices.RemoveAt(i);
+            }
         }
     }
 
@@ -139,7 +169,9 @@ public sealed partial class MainViewModel
 
     private void OnTempChoiceChanged(TempChoice _)
     {
-        _settings.TempSensors = TempChoices.Where(x => x.IsChecked).Select(x => x.Key).ToList();
+        // Las marcadas de hardware ausente ahora mismo (un disco desconectado) se conservan.
+        var absent = (_settings.TempSensors ?? new()).Where(k => !_tempChoices.ContainsKey(k));
+        _settings.TempSensors = absent.Concat(TempChoices.Where(x => x.IsChecked).Select(x => x.Key)).ToList();
         TempSelectionChanged?.Invoke();
         Rerender();
     }

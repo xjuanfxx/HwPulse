@@ -32,8 +32,11 @@ internal static class DiskMap
         try
         {
             var letters = new Dictionary<int, List<string>>();
+            // Cada ManagementObject envuelve un objeto COM: se liberan al terminar (using) en vez de esperar al GC.
             using (var q = new ManagementObjectSearcher(@"root\Microsoft\Windows\Storage", "SELECT DiskNumber, DriveLetter FROM MSFT_Partition"))
-                foreach (ManagementObject p in q.Get())
+            using (var rows = q.Get())
+                foreach (ManagementObject p in rows)
+                using (p)
                 {
                     if (p["DriveLetter"] is char c && c != '\0')
                     {
@@ -43,7 +46,9 @@ internal static class DiskMap
                     }
                 }
             using (var q = new ManagementObjectSearcher(@"root\Microsoft\Windows\Storage", "SELECT DeviceId, FriendlyName, MediaType, BusType FROM MSFT_PhysicalDisk"))
-                foreach (ManagementObject d in q.Get())
+            using (var rows = q.Get())
+                foreach (ManagementObject d in rows)
+                using (d)
                 {
                     if (!int.TryParse(d["DeviceId"]?.ToString(), out int n)) continue;
                     letters.TryGetValue(n, out var l);

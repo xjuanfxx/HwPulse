@@ -69,29 +69,55 @@ public sealed class WebServer : IDisposable
 
     // Clientes conectados a /api/stream (Server-Sent Events): reciben cada lectura en el mismo instante
     // en que la app la muestra, en vez de preguntar cada segundo y quedarse una lectura atrás.
-    private readonly List<HttpListenerResponse> _streams = new();
-    private readonly object _writeLock = new();
+    // Cada cliente tiene como mucho UN envío en curso: si un teléfono va lento (o se quedó colgado sin
+    // cerrar la conexión), sus lecturas intermedias se descartan en vez de acumularse en memoria, y si un
+    // envío tarda más de WriteTimeout se le desconecta (el navegador se reconecta solo con "retry").
+    private sealed class StreamClient(HttpListenerResponse res)
+    {
+        public readonly HttpListenerResponse Res = res;
+        public int Busy; // 0 = libre, 1 = enviando (Interlocked)
+    }
+    private readonly List<StreamClient> _streams = new();
+    private static readonly TimeSpan WriteTimeout = TimeSpan.FromSeconds(5);
 
     /// <summary>Se llama una vez por segundo con la lectura más reciente ya serializada.</summary>
     public void SetJson(string json)
     {
         _json = Encoding.UTF8.GetBytes(json);
-        HttpListenerResponse[] clients;
+        StreamClient[] clients;
         lock (_streams) clients = _streams.ToArray();
         if (clients.Length == 0) return;
         var frame = Encoding.UTF8.GetBytes("data: " + json + "\n\n");
-        // Fuera del hilo de la interfaz: un teléfono lento no debe frenar la app.
-        _ = Task.Run(() =>
+        foreach (var c in clients)
         {
-            lock (_writeLock) // un envío a la vez, para no mezclar dos lecturas en el mismo stream
-            {
-                foreach (var c in clients)
-                {
-                    try { c.OutputStream.Write(frame); c.OutputStream.Flush(); }
-                    catch { lock (_streams) _streams.Remove(c); try { c.Abort(); } catch { } }
-                }
-            }
-        });
+            // Aún enviando la anterior: se salta esta lectura (la siguiente ya trae datos más nuevos).
+            if (Interlocked.Exchange(ref c.Busy, 1) == 1) continue;
+            _ = SendAsync(c, frame); // fuera del hilo de la interfaz: un teléfono lento no frena la app
+        }
+    }
+
+    private async Task SendAsync(StreamClient c, byte[] frame)
+    {
+        try
+        {
+            var write = WriteFrameAsync(c.Res, frame);
+            if (await Task.WhenAny(write, Task.Delay(WriteTimeout)) != write) throw new TimeoutException();
+            await write; // propaga el error si la escritura falló
+        }
+        catch { Drop(c); }
+        finally { Volatile.Write(ref c.Busy, 0); }
+    }
+
+    private static async Task WriteFrameAsync(HttpListenerResponse res, byte[] frame)
+    {
+        await res.OutputStream.WriteAsync(frame);
+        await res.OutputStream.FlushAsync();
+    }
+
+    private void Drop(StreamClient c)
+    {
+        lock (_streams) _streams.Remove(c);
+        try { c.Res.Abort(); } catch { }
     }
 
     /// <summary>Hay algún cliente mirando el panel ahora mismo: un SSE conectado o un /api/stats reciente
@@ -122,9 +148,9 @@ public sealed class WebServer : IDisposable
         res.Headers["Cache-Control"] = "no-store";
         res.SendChunked = true;
         var first = Encoding.UTF8.GetBytes("retry: 2000\ndata: " + Encoding.UTF8.GetString(_json) + "\n\n");
-        res.OutputStream.Write(first);
-        res.OutputStream.Flush();
-        lock (_streams) _streams.Add(res);
+        var client = new StreamClient(res) { Busy = 1 };
+        lock (_streams) _streams.Add(client);
+        _ = SendAsync(client, first); // con el mismo límite de tiempo que el resto de envíos
     }
 
     private async Task Loop()
@@ -236,7 +262,7 @@ public sealed class WebServer : IDisposable
     {
         lock (_streams)
         {
-            foreach (var c in _streams) { try { c.Abort(); } catch { } }
+            foreach (var c in _streams) { try { c.Res.Abort(); } catch { } }
             _streams.Clear();
         }
         try { _listener.Stop(); _listener.Close(); } catch { }

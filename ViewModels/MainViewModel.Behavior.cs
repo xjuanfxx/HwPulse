@@ -15,19 +15,46 @@ public sealed partial class MainViewModel
         SettingsDirty?.Invoke();
     }
 
-    // El estado real vive en el Programador de tareas, no en settings.json: se consulta una vez y se cachea.
-    private bool? _autostart;
+    // El estado real vive en el Programador de tareas, no en settings.json. schtasks.exe puede tardar
+    // segundos (antivirus lento), así que nunca se llama en el hilo de la interfaz: la consulta inicial
+    // se lanza en segundo plano y el interruptor queda deshabilitado mientras algo está en curso.
+    private bool _autostart, _autostartBusy, _autostartQueried;
     public bool StartWithWindows
     {
-        get => _autostart ??= Autostart.IsEnabled();
+        get
+        {
+            if (!_autostartQueried) { _autostartQueried = true; _ = RefreshAutostartAsync(); }
+            return _autostart;
+        }
         set
         {
-            if (value == StartWithWindows) return;
-            // Si falla (sin administrador), el interruptor vuelve a su estado real.
-            _autostart = Autostart.Set(value) ? value : Autostart.IsEnabled();
-            Raise();
+            if (value == _autostart || _autostartBusy) return;
+            _ = SetAutostartAsync(value);
         }
     }
+    public bool StartWithWindowsEnabled => !_autostartBusy;
+
+    private async Task RefreshAutostartAsync()
+    {
+        SetAutostartBusy(true);
+        _autostart = await Task.Run(Autostart.IsEnabled);
+        Raise(nameof(StartWithWindows));
+        SetAutostartBusy(false);
+    }
+
+    private async Task SetAutostartAsync(bool on)
+    {
+        _autostart = on; // optimista: el interruptor responde al instante
+        Raise(nameof(StartWithWindows));
+        SetAutostartBusy(true);
+        // Si falla (sin administrador), vuelve a su estado real.
+        bool ok = await Task.Run(() => Autostart.Set(on));
+        if (!ok) _autostart = await Task.Run(Autostart.IsEnabled);
+        Raise(nameof(StartWithWindows));
+        SetAutostartBusy(false);
+    }
+
+    private void SetAutostartBusy(bool busy) { _autostartBusy = busy; Raise(nameof(StartWithWindowsEnabled)); }
 
     // ------------------------------------------------------------------ actualizaciones
     private string _updateKey = "UpdateCheck";

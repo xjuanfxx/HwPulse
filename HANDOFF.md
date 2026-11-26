@@ -1,6 +1,6 @@
 # HwPulse: handoff notes
 
-Status snapshot so another developer or AI agent can pick up the work. Last updated 2026-11-27, after fixing the off-center close dialog (on top of the 2026-11-26 optimization/stability pass and UI polish round).
+Status snapshot so another developer or AI agent can pick up the work. Last updated 2026-11-27, release 0.1.2 (backlog items C5, C6, C8, C9, B5, B6 and the close-dialog centering fix, on top of the 2026-11-26 optimization pass).
 
 ## What it is
 HwPulse is a Windows hardware monitor.
@@ -27,7 +27,7 @@ HwPulse is a Windows hardware monitor.
 dotnet build -c Debug          # Debug build: asInvoker manifest, no UAC prompt
 bin\Debug\net10.0-windows\HwPulse.exe --no-elevate --render <dir>
 ```
-- **`--render <dir>`:** renders every page to PNG and writes `en-fit.txt`/`es-fit.txt`. Every page except Sensors must say `OK` (no scrolling). Expect **32 files** and the process must **exit on its own**. If a PNG is missing, something measured 0 (see gotcha 5). Works even with the overlay hidden (`OverlayVisible: false` in `%AppData%\HwPulse\settings.json`).
+- **`--render <dir>`:** renders every page to PNG and writes `en-fit.txt`/`es-fit.txt`. Every page except Sensors must say `OK` (no scrolling). Expect **32 files** (30 PNG + `en-fit.txt` + `es-fit.txt`) and the process must **exit on its own**. If a PNG is missing, something measured 0 (see gotcha 5). Works even with the overlay hidden (`OverlayVisible: false` in `%AppData%\HwPulse\settings.json`).
 - **Other dev flags:** `--timing`, `--bench <file>`, `--dump <file>`, `--font "<name>"`, `--minimized`, `--no-elevate`, `--updated` (used internally after a self-update).
 - **Release build:**
   ```powershell
@@ -80,6 +80,28 @@ A full audit (architecture, leaks, RAM, threads) drove three rounds of changes. 
 
 ---
 
+## DONE 2026-11-27 (0.1.2)
+
+- **Git:** the opencode pass had created its own local repository without a remote. Its baseline tree was identical to `origin/main` (0.1.1), so its commits were rebased onto `origin/main` and pushed. The local branch is now `main`, tracking `origin/main`. The old local history is kept in branch `backup-local-history` (local only, safe to delete).
+- **Close dialog centered:** see "Close dialog off-center" under UI polish.
+- **C5:** the "Start with Windows" switch no longer blocks the UI. The initial `schtasks /Query` and every create/delete run in `Task.Run`. The switch updates optimistically, is disabled while busy (`StartWithWindowsEnabled`), and reverts to the real state if creation fails. Before, the getter ran `schtasks` synchronously the first time Settings was bound.
+- **B5:** temperature labels (`Describe`) are recomputed only when the language, the CPU/GPU names or the disk short names change. `DescribeSignature` hashes those inputs; before, it ran for every sensor every second.
+- **C8:** `GpuProcessMonitor` retries after a failure instead of switching off for the whole session. Backoff is 30 s, 60 s and so on up to 10 min, the category handles are reopened, and only the first error is logged.
+- **C6:** each SSE client has at most one write in flight (`StreamClient.Busy`, Interlocked). A busy client skips frames instead of queueing them, and a write slower than 5 s drops the client (the browser reconnects through `retry: 2000`). The initial frame goes through the same path. Tested: with a deliberately stalled client connected (`curl --limit-rate 1`), a healthy client still got about 1 frame/s.
+- **C9:**
+  - `DiskMap` disposes the `ManagementObjectCollection` and every `ManagementObject`.
+  - The tray `NotifyIcon.Icon` is disposed on exit, except the shared `SystemIcons` fallback.
+  - Sensor rows and groups of hardware that disappears are removed from the Sensors page; this is checked only when the sensor count changes.
+  - Temperature choices of missing hardware are removed from the picker. The saved selection keeps their keys, so a reconnected disk comes back checked.
+- **B6:** `MultiChart` caches axis `FormattedText` by text, invalidated when DPI changes or after 64 entries, and no longer uses LINQ for the Y labels.
+- **Verified:**
+  - Build: 0 errors, 0 warnings.
+  - `--render`: 30 PNGs, every page OK, no new `errors.log` entries.
+  - Close dialog: center offset 0,0, normal and with the main window half off-screen.
+- **Performance (Release, 60 s after startup, overlay and web on):** about 0.72% CPU with the window open and 0.52% in the tray. Private memory about 161 MB visible and 119 MB in the tray, stable. Same range as 0.1.1; run-to-run noise is about ±0.1%.
+
+---
+
 ## NOT done / backlog (prioritized for the next AI)
 
 ### RAM (the declared goal was to get far below ~106 MB)
@@ -90,14 +112,14 @@ A full audit (architecture, leaks, RAM, threads) drove three rounds of changes. 
 ### CPU
 4. **B2:** replace per-tick `RaiseAll` with selective `Raise(...)` (265 MainWindow bindings + row `RaiseAll`s are still re-evaluated every second; values are mostly unchanged tick to tick).
 5. **B4:** `ProcessMonitor` via one `NtQuerySystemInformation(SystemProcessInformation)` call instead of `Process.GetProcesses()` + per-PID OpenProcess (runs every 2 s while visible).
-6. **B5:** `Describe()` for temperature choices runs per tick (`MainViewModel.Temps.cs`); only needed on creation/language change.
-7. **B6:** `MultiChart` still builds 5 `FormattedText` Y-labels + 3 X-labels per render; cache them.
+6. ~~**B5**~~ done in 0.1.2.
+7. ~~**B6**~~ done in 0.1.2.
 
 ### Stability / hygiene
-8. **C5:** autostart toggle is synchronous on the UI thread (`schtasks`, `WaitForExit(10000)` in `Autostart.cs`) — can freeze Settings for seconds with slow AV.
-9. **C6:** SSE writes to a stalled client are unbounded (`Task.Run` per second, no write timeout/heartbeat) — cap in-flight writes, add keep-alive.
-10. **C8:** `GpuProcessMonitor._broken = true` is permanent on one transient failure; add retry with backoff.
-11. **C9 leftovers:** dispose `NotifyIcon.Icon`; dispose enumerated `ManagementObject`s in `DiskMap`; clean zombie rows when hardware disappears.
+8. ~~**C5**~~ done in 0.1.2.
+9. ~~**C6**~~ done in 0.1.2. There is no separate keep-alive; the 1 s data frames serve as one.
+10. ~~**C8**~~ done in 0.1.2.
+11. ~~**C9**~~ done in 0.1.2.
 
 ### Known cosmetics (accepted, documented)
 - Opening the Network page as admin shows "needs admin" for ~1–2 s (session creation is deferred; first `SampleNetwork` is null).
@@ -106,7 +128,7 @@ A full audit (architecture, leaks, RAM, threads) drove three rounds of changes. 
 - `--render`: `ApplyScale(2)` is a no-op if the user's `OverlayScale` is exactly 2.0 (one PNG variant less); a future regression that measures 0 now manifests as a missing PNG (silent skip in `Save`).
 
 ## Carried over from previous notes (still pending)
-- Push/tag a release (bump `<Version>`, `git tag vX.Y.Z && git push origin vX.Y.Z`), check the Actions run.
+- Test a real self-update from 0.1.1 to 0.1.2 (open 0.1.1, then Settings → "Update to 0.1.2").
 - Test in a real game: FPS stability (sliding-window logic is new-ish), "Start with Windows" in the elevated Release build, a real self-update.
 - Code signing (removes Defender/SmartScreen warnings; the owner must do the submission).
 - Vulkan/OpenGL games report no FPS (only DXGI/D3D9 present events are captured).
