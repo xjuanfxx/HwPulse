@@ -71,6 +71,9 @@ public sealed class AppSettings
     /// <summary>El usuario ocultó el aviso de PawnIO: no vuelve a salir.</summary>
     public bool PawnIODismissed { get; set; }
 
+    /// <summary>Ya se intentó actualizar un PawnIO antiguo porque el CPU no daba datos: no se repite.</summary>
+    public bool PawnIOUpgradeTried { get; set; }
+
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "HwPulse", "settings.json");
 

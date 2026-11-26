@@ -12,7 +12,7 @@
     <ApplicationManifest Condition="'$(Configuration)' != 'Debug'">app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\HwPulse.ico</ApplicationIcon>
     <AssemblyTitle>HwPulse</AssemblyTitle>
-    <Version>0.1.5</Version>
+    <Version>0.1.6</Version>
     <!-- Metadatos completos en el .exe: un ejecutable sin descripción ni producto parece más sospechoso
          a la detección heurística de los antivirus. -->
     <Product>HwPulse</Product>

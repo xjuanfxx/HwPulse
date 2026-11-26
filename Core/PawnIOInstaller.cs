@@ -21,6 +21,8 @@ namespace HwPulse;
 public static class PawnIOInstaller
 {
     private const string Version = "2.2.0";
+    /// <summary>Versión que instala HwPulse; una anterior puede no cargar los módulos de LHM 0.9.6.</summary>
+    public static readonly System.Version Pinned = new(2, 2, 0);
     private const string Url = "https://github.com/namazso/PawnIO.Setup/releases/download/" + Version + "/PawnIO_setup.exe";
     private const string Sha256 = "1F519A22E47187F70A1379A48CA604981C4FCF694F4E65B734AAA74A9FBA3032";
     public const string ManualUrl = "https://pawnio.eu/";
@@ -34,6 +36,17 @@ public static class PawnIOInstaller
 
     /// <summary>El servicio del driver está registrado en Windows.</summary>
     public static bool ServiceExists() => KeyExists(@"SYSTEM\CurrentControlSet\Services\PawnIO");
+
+    /// <summary>Versión instalada según su entrada de desinstalación (DisplayVersion), o null.</summary>
+    public static System.Version? InstalledVersion()
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PawnIO");
+            return System.Version.TryParse(key?.GetValue("DisplayVersion")?.ToString(), out var v) ? v : null;
+        }
+        catch { return null; }
+    }
 
     /// <summary>Hay una instalación registrada (lo que mira LHM).</summary>
     public static bool UninstallEntryExists() => KeyExists(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PawnIO");
@@ -68,9 +81,9 @@ public static class PawnIOInstaller
             using var p = Process.Start(psi)!;
             string output = p.StandardOutput.ReadToEnd();
             p.WaitForExit(5000);
-            foreach (var line in output.Split('\n'))
-                if (line.Contains("STATE", StringComparison.Ordinal))
-                    return line.Split(' ', StringSplitOptions.RemoveEmptyEntries).LastOrDefault()?.Trim() ?? "unknown";
+            // sc.exe traduce las etiquetas ("ESTADO" en español) pero no los nombres de estado: se buscan esos.
+            var m = System.Text.RegularExpressions.Regex.Match(output, @"\d\s+(RUNNING|STOPPED|START_PENDING|STOP_PENDING|PAUSED|CONTINUE_PENDING|PAUSE_PENDING)");
+            if (m.Success) return m.Groups[1].Value;
         }
         catch { }
         return "unknown";

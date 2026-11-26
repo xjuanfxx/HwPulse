@@ -56,6 +56,8 @@ public sealed class Loc : INotifyPropertyChanged
         ["Battery"] = ("Battery", "Batería"),
         ["CpuGpuDraw"] = ("CPU + GPU draw", "Consumo CPU + GPU"),
         ["Total"] = ("Total", "Total"),
+        ["TotalCpuOnly"] = ("Total (CPU only)", "Total (solo CPU)"),
+        ["GpuPowerNotReported"] = ("Not reported by this GPU or its driver", "Esta GPU o su driver no informa la potencia"),
         ["AcAdapter"] = ("AC", "Corriente"),
         ["OnBatteryShort"] = ("Battery", "Batería"),
         ["Unknown"] = ("Unknown", "Desconocido"),

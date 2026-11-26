@@ -199,6 +199,11 @@ public sealed partial class MainViewModel : Observable
     public bool HasBattery { get; } = Native.HasBattery();
     public Visibility BatteryRowsVisibility => HasBattery ? Visibility.Visible : Visibility.Collapsed;
     public string TotalPowerText { get; private set; } = Fmt.None;
+    /// <summary>"Total", o "Total (solo CPU)" cuando la GPU existe pero no informa potencia: así la suma
+    /// no se presenta como el consumo completo del equipo.</summary>
+    public string TotalLabel { get; private set; } = Loc.T("Total");
+    /// <summary>Explicación cuando la GPU no informa potencia (tooltip de la fila y subtítulo en la página GPU).</summary>
+    public string? GpuPowerTip { get; private set; }
 
     // ---------------------------------------------------------------- Estado
     public string StatusText { get; private set; } = "";
@@ -414,7 +419,9 @@ public sealed partial class MainViewModel : Observable
         GpuTempMinMax = Fmt.MinMax(_gpuTemp, Fmt.TempShort);
         GpuCoreClockText = Fmt.Mhz(s.GpuCoreClock);
         GpuPowerText = Fmt.Watts(s.GpuPower);
-        GpuPowerMinMax = Fmt.MinMax(_gpuPower, Fmt.Watts);
+        bool gpuNoPower = !string.IsNullOrEmpty(s.GpuName) && s.GpuPower is null;
+        GpuPowerTip = gpuNoPower ? Loc.T("GpuPowerNotReported") : null;
+        GpuPowerMinMax = gpuNoPower ? GpuPowerTip! : Fmt.MinMax(_gpuPower, Fmt.Watts);
         GpuDetails = Join(
             s.GpuHotSpot is double hs ? Loc.F("HotSpot", Fmt.Temp(hs)) : null,
             s.GpuMemClock is double mc ? Loc.F("MemClock", Fmt.Mhz(mc)) : null,
@@ -473,6 +480,7 @@ public sealed partial class MainViewModel : Observable
         };
         BatteryText = s.BatteryCharge is null ? Fmt.None : Join(Fmt.Pct(s.BatteryCharge), rate);
         TotalPowerText = s.CpuPower is null && s.GpuPower is null ? Fmt.None : Fmt.Watts((s.CpuPower ?? 0) + (s.GpuPower ?? 0));
+        TotalLabel = Loc.T(!string.IsNullOrEmpty(s.GpuName) && s.GpuPower is null && s.CpuPower is not null ? "TotalCpuOnly" : "Total");
 
         UpdateStatus(s);
         if (UiVisible) UpdateSensors(s); // ~150 filas de la página Sensores: solo si se pueden ver

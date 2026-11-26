@@ -396,9 +396,9 @@ public partial class App : Application
     /// app para abrir los sensores con el driver; si Windows pide reiniciar, se avisa. Si falla, no se
     /// reintenta solo en cada inicio: el aviso ofrece reintentar o instalarlo a mano.
     /// </summary>
-    private async Task EnsurePawnIOAsync(bool auto)
+    private async Task EnsurePawnIOAsync(bool auto, bool upgrade = false)
     {
-        if (_pawnioBusy || !_vm.IsAdmin || PawnIOInstaller.IsWorking()) return;
+        if (_pawnioBusy || !_vm.IsAdmin || (!upgrade && PawnIOInstaller.IsWorking())) return;
         if (auto && (_settings.PawnIODismissed)) return;
         if (auto && _settings.PawnIOAutoFailed) { _vm.SetPawnioState("failed"); return; }
 
@@ -438,8 +438,10 @@ public partial class App : Application
     private void LogCpuDiagnostics(Snapshot s)
     {
         if (!_vm.IsAdmin || s.CpuTempMax is not null) return;
+        bool noCpuData = s.CpuClockAvg is null;
         _ = Task.Run(() =>
         {
+            var pawnioVersion = PawnIOInstaller.InstalledVersion();
             string hvci = "unknown";
             try
             {
@@ -449,9 +451,23 @@ public partial class App : Application
             catch { }
             ErrorLog.Info("CPU diagnostics", "no CPU temperature with admin rights. " +
                 $"CPU='{s.CpuName}'; clock={(s.CpuClockAvg is double c ? c.ToString("0") + " MHz" : "none")}; " +
-                $"PawnIO: uninstallEntry={PawnIOInstaller.UninstallEntryExists()}, service={PawnIOInstaller.ServiceState()}, " +
+                $"PawnIO: version={pawnioVersion?.ToString() ?? "none"}, uninstallEntry={PawnIOInstaller.UninstallEntryExists()}, service={PawnIOInstaller.ServiceState()}, " +
                 $"device={PawnIOInstaller.DeviceAvailable()}; HVCI={hvci}; OS={Environment.OSVersion.Version}; " +
                 $"HwPulse={Updater.Current}");
+
+            // PawnIO responde pero el CPU no da ni temperatura ni reloj: con una versión anterior a la que
+            // instala HwPulse, los módulos de LHM pueden no cargar (sin error). Se actualiza una sola vez.
+            if (noCpuData && pawnioVersion != null && pawnioVersion < PawnIOInstaller.Pinned
+                && PawnIOInstaller.DeviceAvailable() && !_settings.PawnIOUpgradeTried)
+            {
+                ErrorLog.Info("PawnIO", $"upgrading {pawnioVersion} -> {PawnIOInstaller.Pinned} because the CPU reports no data");
+                Dispatcher.BeginInvoke(() =>
+                {
+                    _settings.PawnIOUpgradeTried = true;
+                    SaveSoon();
+                    _ = EnsurePawnIOAsync(auto: false, upgrade: true);
+                });
+            }
         });
     }
 

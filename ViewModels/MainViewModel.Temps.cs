@@ -125,6 +125,9 @@ public sealed partial class MainViewModel
             (c.Label, c.ShortLabel, c.Order, c.DefaultOn) = r.Name switch
             {
                 "Core Max" => (Loc.T("TempCpuMax"), "CPU", 0, true),
+                // AMD Ryzen: la temperatura principal del CPU (la que usan BIOS y Ryzen Master)
+                "Core (Tctl/Tdie)" or "Core (Tctl)" or "CPU Cores" => ("CPU (Tctl/Tdie)", "CPU", 0, true),
+                _ when r.Name.StartsWith("CCD", StringComparison.Ordinal) => ($"CPU {r.Name}", r.Name.Replace(" (Tdie)", ""), 5, false),
                 "CPU Package" => (Loc.T("TempCpuPkg"), Loc.T("ShortCpuPkg"), 1, false),
                 "Core Average" => (Loc.T("TempCpuAvg"), Loc.T("ShortCpuAvg"), 2, false),
                 _ when CoreN.Match(r.Name) is { Success: true } m => (Loc.F("TempCpuCore", m.Groups[1].Value), Loc.F("ShortCore", m.Groups[1].Value),

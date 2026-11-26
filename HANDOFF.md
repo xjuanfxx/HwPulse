@@ -1,6 +1,6 @@
 # HwPulse: handoff notes
 
-Status snapshot so another developer or AI agent can pick up the work. Last updated 2026-11-27, release 0.1.5 (PawnIO real-driver check, auto-start and diagnostics; 0.1.4: PawnIO auto-install; 0.1.3: in-window update notice; 0.1.2: backlog items C5, C6, C8, C9, B5, B6 and the close-dialog centering fix, on top of the 2026-11-26 optimization pass).
+Status snapshot so another developer or AI agent can pick up the work. Last updated 2026-11-27, release 0.1.6 (AMD CPU sensor names, NVML GPU power fallback, honest total power, targeted PawnIO upgrade, better diagnostics; 0.1.5: PawnIO real-driver check, auto-start and diagnostics; 0.1.4: PawnIO auto-install; 0.1.3: in-window update notice; 0.1.2: backlog items C5, C6, C8, C9, B5, B6 and the close-dialog centering fix, on top of the 2026-11-26 optimization pass).
 
 ## What it is
 HwPulse is a Windows hardware monitor.
@@ -77,6 +77,48 @@ A full audit (architecture, leaks, RAM, threads) drove three rounds of changes. 
 - `dotnet build` 0 errors / 0 warnings after every step.
 - `--render` smoke test: 32 PNGs (en+es, all pages, 6 overlay captures, colors), clean exit, zero new `errors.log` entries.
 - Real-run dialog verification: launch, `PostMessage WM_CLOSE` to the main window (largest window of the PID), capture the new dialog HWND with a DPI-aware GDI+ utility, then pixel-classify the capture against the app palette (bottom/right rows must be `#111111`, not `#202023`; accent button ring at its edges). The two console utilities used (`imgan` pixel classifier, `shot` window capturer) were throwaway builds in `%TEMP%\opencode\` — recreate if needed.
+
+---
+
+## DONE 2026-11-27 (0.1.6)
+
+- **REAL ROOT CAUSE of "no CPU temperature/clock" on the friend's AMD Ryzen 5 5500 (found from their `--dump`):** LHM read every sensor fine (the Sensors page listed them, and PawnIO was **2.2.0** and working), but HwPulse only mapped **Intel** sensor names. The PawnIO-version hypothesis below was wrong. The targeted upgrade stays as a harmless safety net, since it only fires with no clock AND PawnIO < 2.2.0.
+
+  | Value | Intel (LHM name) | AMD Ryzen (LHM name) |
+  |---|---|---|
+  | CPU temperature | `Core Max`, `CPU Core #N` | `Core (Tctl/Tdie)` (also `Core (Tctl)`, `CPU Cores`, `CCDn (Tdie)`) |
+  | Per-core clock | `CPU Core #N` | `Core #N` (physical cores only) |
+  | Per-core load | `CPU Core #N Thread #M` | `CPU Core #1..#12`, one per **logical thread** on a 6c/12t part |
+  | Power | `CPU Package` | `Package` |
+  | Voltage | `CPU Core` | `Core (SVI2 TFN)` / `(SVI3 TFN)` |
+
+  - `SensorService` now accepts the AMD names: the `AmdCoreClock` regex; `CpuTempMax` falls back through the AMD names and finally `MaxCpuTemp` (highest CPU temperature that isn't a "Distance"); `CpuPower` and `CpuVoltage` fall back too; `CpuClockAvg` falls back to `Cores (Average)`.
+  - **Thread → core pairing:** `_threadsPerCore` = 2 when there are exactly twice as many load sensors as clock sensors (max index too), so loads `2k-1` and `2k` average into core `k`. Intel stays at 1, because its threads are already named `Thread #M`. The core order and divisor are computed once per map version, BEFORE the per-tick loop.
+  - **Temperature picker:** `Core (Tctl/Tdie)` / `Core (Tctl)` / `CPU Cores` become "CPU (Tctl/Tdie)", checked by default; `CCDn (Tdie)` sensors are listed unchecked.
+  - **Verified:** Intel is unchanged (4 cores, every page OK, no errors). AMD still needs a real test on the friend's PC, since no AMD machine is available for development.
+  - **The friend confirmed AMD works** (temperature, clock and power now show).
+- **NVIDIA GPU power fallback (`Monitoring/NvmlPower.cs`):** the friend's RTX 4060 dump has NO power sensor (no `GPU Package`, and NvAPI "Power Topology" is empty). LHM's NVML read fails silently on that PC, while on the owner's GTX 1660 Ti `GPU Package` comes from NVML.
+  - When LHM gives no GPU power and the GPU is NVIDIA, `SensorService.FillGpu` calls `NvmlPower.ReadWatts(gpu.Name)` (`nvmlDeviceGetPowerUsage`, mW → W).
+  - It loads `nvml.dll` with `NativeLibrary.Load`, only from admin-writable places: System32, then the newest `DriverStore\FileRepository\nv*\nvml.dll`, then `Program Files\NVIDIA Corporation\NVSMI`.
+  - It picks the device by name ("NVIDIA " prefix tolerated), otherwise index 0.
+  - Each failure step logs once to errors.log (`NVML:` dll not found / `nvmlInit_v2` code / `GetPowerUsage` code).
+  - `--dump` prints `NVML (direct): X W`. Verified on the owner's PC: 20.2 W, consistent with LHM's 13.9–20.5 W.
+  - **Result on the 4060:** `nvmlDeviceGetPowerUsage` returned code 3 (`NVML_ERROR_NOT_SUPPORTED`), and `nvidia-smi` reports `power.draw`, `power.draw.average` and `power.draw.instant` as `[N/A]` (driver 621.14; `power.limit` = 115 W). That GPU/driver combination does not report power at all, so no tool can show it. Not a HwPulse bug; the fallback stays for other machines.
+- **Honest total power:** when a GPU exists but reports no power, the Power card label becomes "Total (CPU only)" (`TotalLabel`) instead of presenting the CPU watts as the system total. The GPU power row and the GPU page "Power" readout explain "Not reported by this GPU or its driver" (`GpuPowerTip` as tooltip / sub-text).
+
+
+- **Field report from the friend's PC (0.1.5 diagnostic line):** `CPU='AMD Ryzen 5 5500'; clock=none; PawnIO: uninstallEntry=True, service=unknown, device=True; HVCI=not set; OS=10.0.26300`.
+  - PawnIO is installed and its device exists, yet BOTH temperature and clock are missing. On AMD, both come from the same LHM PawnIO modules (`AMDFamily17.bin` / `RyzenSMU.bin`), so the module most likely fails to load.
+  - **Leading hypothesis:** an older PawnIO, installed by another tool, that lacks natives the LHM 0.9.6 modules use. The owner's Intel PC works with PawnIO 2.1.0.0, but Intel uses a different module (`IntelMSR.bin`). **Unconfirmed**; the friend's PawnIO version wasn't logged in 0.1.5.
+- **Targeted upgrade, tried once:**
+  - Conditions, checked at the ~8 s diagnostic: admin, no CPU temperature AND no CPU clock, PawnIO device present, installed PawnIO version below `PawnIOInstaller.Pinned` (2.2.0), and `!AppSettings.PawnIOUpgradeTried`.
+  - It then runs the pinned installer through `EnsurePawnIOAsync(upgrade: true)`, with the notice and relaunch.
+  - Machines where the CPU already reads fine (like the owner's) are never touched.
+- **Diagnostic fixes:**
+  - `ServiceState()` no longer depends on the system language. It used to look for the localized "STATE" label (Spanish Windows says "ESTADO"); now it matches the untranslated state names (RUNNING, STOPPED…).
+  - The `CPU diagnostics` line now includes the PawnIO `version` (Uninstall `DisplayVersion`).
+- **`--dump <file>`** now appends a `PawnIO:` status line and LHM's full `Computer.GetReport()`. To use it on another PC, run `HwPulse.exe --dump "$env:USERPROFILE\Desktop\hwpulse-dump.txt"` and accept UAC; the dump relaunches elevated.
+- **Next if 0.1.6 doesn't fix the friend's PC:** read their dump and check the AMD CPU section of the LHM report for module or SMU errors. Also compare against the official LibreHardwareMonitor app on that PC, and look for software holding LHM's global mutexes (Ryzen Master, Armoury Crate, iCUE…).
 
 ---
 

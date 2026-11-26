@@ -485,9 +485,9 @@
                                         <TextBlock Grid.Row="2" Style="{StaticResource Body}" Foreground="{StaticResource Muted}" Text="CPU"/>
                                         <TextBlock Grid.Row="2" Grid.Column="1" Style="{StaticResource Num}" Text="{Binding CpuPowerText}" HorizontalAlignment="Right"/>
                                         <TextBlock Grid.Row="3" Style="{StaticResource Body}" Foreground="{StaticResource Muted}" Text="GPU"/>
-                                        <TextBlock Grid.Row="3" Grid.Column="1" Style="{StaticResource Num}" Text="{Binding GpuPowerText}" HorizontalAlignment="Right"/>
+                                        <TextBlock Grid.Row="3" Grid.Column="1" Style="{StaticResource Num}" Text="{Binding GpuPowerText}" HorizontalAlignment="Right" ToolTip="{Binding GpuPowerTip}"/>
                                         <Border Grid.Row="4" Height="1" Background="{StaticResource Line}" VerticalAlignment="Center" Grid.ColumnSpan="2"/>
-                                        <TextBlock Grid.Row="5" Style="{StaticResource Body}" Foreground="{StaticResource Muted}" Text="{Binding [Total], Source={x:Static local:Loc.I}}"/>
+                                        <TextBlock Grid.Row="5" Style="{StaticResource Body}" Foreground="{StaticResource Muted}" Text="{Binding TotalLabel}"/>
                                         <TextBlock Grid.Row="5" Grid.Column="1" Style="{StaticResource Num}" FontWeight="SemiBold" Foreground="{StaticResource TextStrong}" Text="{Binding TotalPowerText}" HorizontalAlignment="Right"/>
                                     </Grid>
                                 </StackPanel>

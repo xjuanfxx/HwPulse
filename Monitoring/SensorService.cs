@@ -70,10 +70,14 @@ public sealed class Snapshot
 public sealed class SensorService : IDisposable
 {
     private static readonly Regex CoreExact = new(@"^CPU Core #(\d+)$", RegexOptions.Compiled);
+    // AMD (Ryzen) nombra distinto en LHM: reloj por núcleo físico "Core #N" (sin "CPU"), sin temperatura
+    // por núcleo, y la carga por hilo lógico como "CPU Core #1..#12" en un 6 núcleos / 12 hilos.
+    private static readonly Regex AmdCoreClock = new(@"^Core #(\d+)$", RegexOptions.Compiled);
     private static readonly Regex CoreLoad = new(@"^CPU Core #(\d+)( Thread #\d+)?$", RegexOptions.Compiled);
     private static readonly Regex FilterAdapter = new(@"-\d{4}$", RegexOptions.Compiled);
 
     private readonly Computer _pc;
+    private readonly NvmlPower _nvml = new(); // respaldo de la potencia NVIDIA si LHM no la da
     private readonly object _lock = new();
     private readonly bool _isAdmin;
 
@@ -154,6 +158,9 @@ public sealed class SensorService : IDisposable
     private readonly Dictionary<ISensor, (CoreRole role, int core)> _coreRoles = new();
     private int _coreOrderVersion = -1;
     private int[] _coreOrder = Array.Empty<int>();
+    // Hilos por núcleo para agrupar la carga: 2 si hay el doble de cargas que de relojes (AMD con SMT, que
+    // publica una carga por hilo lógico como si fuera un núcleo); 1 en Intel ("CPU Core #N Thread #M").
+    private int _threadsPerCore = 1;
     // Diccionarios reutilizados en cada lectura (antes se creaban nuevos por tick).
     private readonly Dictionary<int, double?> _clocks = new();
     private readonly Dictionary<int, double?> _temps = new();
@@ -326,6 +333,8 @@ public sealed class SensorService : IDisposable
         {
             case SensorType.Clock when CoreExact.Match(s.Name) is { Success: true } m:
                 return (CoreRole.Clock, int.Parse(m.Groups[1].Value));
+            case SensorType.Clock when AmdCoreClock.Match(s.Name) is { Success: true } m:
+                return (CoreRole.Clock, int.Parse(m.Groups[1].Value));
             case SensorType.Temperature when CoreExact.Match(s.Name) is { Success: true } m:
                 return (CoreRole.Temp, int.Parse(m.Groups[1].Value));
             case SensorType.Load when CoreLoad.Match(s.Name) is { Success: true } m:
@@ -346,6 +355,29 @@ public sealed class SensorService : IDisposable
         foreach (var list in _loads.Values) list.Clear();
         double? tjMin = null;
 
+        // El conjunto de núcleos solo cambia cuando cambia el hardware: el orden se cachea con el mapa.
+        if (_coreOrderVersion != _mapVersion)
+        {
+            var clockCores = new HashSet<int>();
+            var loadCores = new HashSet<int>();
+            var tempCores = new HashSet<int>();
+            foreach (var s in ss)
+            {
+                if (!_coreRoles.TryGetValue(s, out var r)) _coreRoles[s] = r = ParseCoreRole(s);
+                if (r.role == CoreRole.Clock) clockCores.Add(r.core);
+                else if (r.role == CoreRole.Load) loadCores.Add(r.core);
+                else if (r.role == CoreRole.Temp) tempCores.Add(r.core);
+            }
+            _threadsPerCore = clockCores.Count > 0 && loadCores.Count == clockCores.Count * 2
+                              && loadCores.Max() == clockCores.Max() * 2 ? 2 : 1;
+            var set = new HashSet<int>(clockCores);
+            set.UnionWith(tempCores);
+            foreach (var c in loadCores) set.Add((c + _threadsPerCore - 1) / _threadsPerCore);
+            _coreOrder = set.ToArray();
+            Array.Sort(_coreOrder);
+            _coreOrderVersion = _mapVersion;
+        }
+
         foreach (var s in ss)
         {
             if (!_coreRoles.TryGetValue(s, out var role))
@@ -357,7 +389,8 @@ public sealed class SensorService : IDisposable
                 case CoreRole.Load:
                     if (V(s) is double l)
                     {
-                        if (!_loads.TryGetValue(role.core, out var list)) _loads[role.core] = list = new List<double>(2);
+                        int core = (role.core + _threadsPerCore - 1) / _threadsPerCore; // hilo -> núcleo físico
+                        if (!_loads.TryGetValue(core, out var list)) _loads[core] = list = new List<double>(2);
                         list.Add(l);
                     }
                     break;
@@ -367,18 +400,6 @@ public sealed class SensorService : IDisposable
             }
         }
         snap.TjDistanceMin = tjMin;
-
-        // El conjunto de núcleos solo cambia cuando cambia el hardware: el orden se cachea con el mapa.
-        if (_coreOrderVersion != _mapVersion)
-        {
-            var set = new HashSet<int>();
-            foreach (var s in ss)
-                if (_coreRoles.TryGetValue(s, out var r) && r.role is CoreRole.Clock or CoreRole.Temp or CoreRole.Load)
-                    set.Add(r.core);
-            _coreOrder = set.ToArray();
-            Array.Sort(_coreOrder);
-            _coreOrderVersion = _mapVersion;
-        }
 
         double clockSum = 0;
         int clockCount = 0;
@@ -400,12 +421,33 @@ public sealed class SensorService : IDisposable
         }
         snap.CpuClockAvg = clockCount > 0 ? clockSum / clockCount : null;
 
-        snap.CpuTempMax = NamedV(cpu, SensorType.Temperature, "core max") ?? coreTempMax;
+        if (snap.CpuClockAvg is null) snap.CpuClockAvg = NamedV(cpu, SensorType.Clock, "cores (average)");
+
+        // Intel: "Core Max" / por núcleo / "CPU Package". AMD: "Core (Tctl/Tdie)" (Ryzen) o "CPU Cores";
+        // los Ryzen con varios CCD además publican "CCD1 (Tdie)"… Como último recurso, la más alta del CPU.
+        snap.CpuTempMax = NamedV(cpu, SensorType.Temperature, "core max") ?? coreTempMax
+                          ?? NamedV(cpu, SensorType.Temperature, "core (tctl/tdie)")
+                          ?? NamedV(cpu, SensorType.Temperature, "core (tctl)")
+                          ?? NamedV(cpu, SensorType.Temperature, "cpu cores")
+                          ?? NamedV(cpu, SensorType.Temperature, "cpu package")
+                          ?? MaxCpuTemp(ss);
         snap.CpuTempPkg = NamedV(cpu, SensorType.Temperature, "cpu package");
         snap.CpuLoad = NamedV(cpu, SensorType.Load, "cpu total");
         snap.CpuCoreLoadMax = NamedV(cpu, SensorType.Load, "cpu core max");
-        snap.CpuPower = NamedV(cpu, SensorType.Power, "cpu package");
-        snap.CpuVoltage = NamedV(cpu, SensorType.Voltage, "cpu core");
+        snap.CpuPower = NamedV(cpu, SensorType.Power, "cpu package") ?? NamedV(cpu, SensorType.Power, "package");
+        snap.CpuVoltage = NamedV(cpu, SensorType.Voltage, "cpu core") ?? NamedV(cpu, SensorType.Voltage, "core (svi2 tfn)")
+                          ?? NamedV(cpu, SensorType.Voltage, "core (svi3 tfn)");
+    }
+
+    /// <summary>La temperatura más alta del CPU, sin las "distancias a TjMax" (que no son temperaturas).</summary>
+    private static double? MaxCpuTemp(ISensor[] ss)
+    {
+        double? max = null;
+        foreach (var s in ss)
+            if (s.SensorType == SensorType.Temperature && !s.Name.Contains("Distance", StringComparison.Ordinal)
+                && s.Value is float v && float.IsFinite(v) && v > 0 && (max is null || v > max))
+                max = v;
+        return max;
     }
 
     private void FillGpu(IHardware gpu, Snapshot snap)
@@ -416,7 +458,8 @@ public sealed class SensorService : IDisposable
         snap.GpuHotSpot = NamedV(gpu, SensorType.Temperature, "gpu hot spot");
         snap.GpuCoreClock = NamedV(gpu, SensorType.Clock, "gpu core");
         snap.GpuMemClock = NamedV(gpu, SensorType.Clock, "gpu memory");
-        snap.GpuPower = NamedV(gpu, SensorType.Power, "gpu package") ?? FirstV(gpu, SensorType.Power);
+        snap.GpuPower = NamedV(gpu, SensorType.Power, "gpu package") ?? FirstV(gpu, SensorType.Power)
+                        ?? (gpu == _gpuNv ? _nvml.ReadWatts(gpu.Name) : null);
         snap.VramUsedMb = NamedV(gpu, SensorType.SmallData, "gpu memory used");
         snap.VramTotalMb = NamedV(gpu, SensorType.SmallData, "gpu memory total");
         snap.GpuFanRpm = FirstV(gpu, SensorType.Fan);
@@ -539,6 +582,12 @@ public sealed class SensorService : IDisposable
         sb.AppendLine($"RAM: {snap.RamUsedGb:F1} GB usados, {snap.RamAvailGb:F1} GB libres ({snap.RamLoad:F0} %)");
         foreach (var d in snap.Disks) sb.AppendLine($"Disco {d.Name}: {d.TempC} °C, actividad {d.Activity:F0} %");
         sb.AppendLine($"Energía: AC={snap.OnAc}, batería {snap.BatteryCharge} %, tasa {snap.BatteryRateW} W");
+        if (_gpuNv != null) sb.AppendLine($"NVML (direct): {_nvml.ReadWatts(_gpuNv.Name)?.ToString("0.0") ?? "unavailable"} W");
+        sb.AppendLine($"PawnIO: version={PawnIOInstaller.InstalledVersion()?.ToString() ?? "none"}, uninstallEntry={PawnIOInstaller.UninstallEntryExists()}, " +
+                      $"service={PawnIOInstaller.ServiceState()}, device={PawnIOInstaller.DeviceAvailable()}");
+        // El reporte de LibreHardwareMonitor explica qué detectó (familia del CPU, módulos, registros leídos).
+        try { sb.AppendLine().AppendLine("--- LibreHardwareMonitor report ---").AppendLine(_pc.GetReport()); }
+        catch (Exception ex) { sb.AppendLine("LHM report failed: " + ex.Message); }
         return sb.ToString();
     }
 
@@ -573,6 +622,6 @@ public sealed class SensorService : IDisposable
 
     public void Dispose()
     {
-        lock (_lock) { try { _pc.Close(); } catch { } }
+        lock (_lock) { try { _pc.Close(); } catch { } _nvml.Dispose(); }
     }
 }
