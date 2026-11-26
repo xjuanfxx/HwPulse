@@ -395,6 +395,16 @@ public partial class App : Application
         void Save(FrameworkElement el, string name)
         {
             el.UpdateLayout();
+            // Elementos desmontados o de ventanas nunca mostradas (overlay oculto por ajuste): nadie los
+            // midió y su tamaño real es 0, con lo que RenderTargetBitmap no acepta la medida. Se miden
+            // aquí, igual que hace OverlayWindow.Render, antes de capturar.
+            if (el.ActualWidth < 1 || el.ActualHeight < 1)
+            {
+                el.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
+                el.Arrange(new Rect(el.DesiredSize));
+                el.UpdateLayout();
+                if (el.ActualWidth < 1 || el.ActualHeight < 1) return; // no hay nada que capturar
+            }
             var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(el);
             var bmp = new System.Windows.Media.Imaging.RenderTargetBitmap(
                 (int)(el.ActualWidth * dpi.DpiScaleX), (int)(el.ActualHeight * dpi.DpiScaleY),
@@ -424,6 +434,9 @@ public partial class App : Application
         pages.Last().nav.IsChecked = true;
         Save((FrameworkElement)_main.PageSettings.Content, $"{Loc.I.Lang}-settings-full.png");
         pages[0].nav.IsChecked = true;
+        // El overlay puede estar oculto por ajuste del usuario: su contenido desmontado nunca se midió
+        // y las capturas de abajo reventarían (mide 0). Se dibuja en frío antes de capturarlo.
+        _overlay!.RenderNow();
         var prevStyle = _vm.OverlayPanel;
         _vm.OverlayPanel = true;
         Save(_overlay!.SourceContent, $"{Loc.I.Lang}-overlay-panel.png");

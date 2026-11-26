@@ -7,9 +7,6 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>true</UseWindowsForms>
-    <!-- La app formatea todo con InvariantCulture (Fmt.cs) y sus textos son propios (Loc.cs): ICU no aporta
-         nada y solo cuesta varios MB de DLL y tablas mapeadas. -->
-    <InvariantGlobalization>true</InvariantGlobalization>
     <!-- Release (lo que se publica) exige administrador; Debug no, para poder probar sin el aviso de UAC. -->
     <ApplicationManifest Condition="'$(Configuration)' == 'Debug'">app.dev.manifest</ApplicationManifest>
     <ApplicationManifest Condition="'$(Configuration)' != 'Debug'">app.manifest</ApplicationManifest>

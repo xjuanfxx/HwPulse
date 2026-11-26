@@ -82,6 +82,20 @@ public partial class OverlayWindow : Window
     {
         _renderQueued = false;
         if (!IsVisible) return;
+        RenderCore();
+    }
+
+    /// <summary>Solo para las capturas de desarrollo (--render): mide y dibuja el contenido desmontado
+    /// aunque la ventana esté oculta. Si el overlay nunca se mostró, nadie midió ese contenido (mide 0)
+    /// y capturarlo con RenderTargetBitmap revienta.</summary>
+    public void RenderNow()
+    {
+        _renderQueued = false;
+        RenderCore();
+    }
+
+    private void RenderCore()
+    {
         _source.Measure(new Size(double.PositiveInfinity, double.PositiveInfinity));
         _source.Arrange(new Rect(_source.DesiredSize));
         _source.UpdateLayout();
