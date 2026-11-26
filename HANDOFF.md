@@ -1,6 +1,6 @@
 # HwPulse: handoff notes
 
-Status snapshot so another developer or AI agent can pick up the work. Last updated 2026-11-27, release 0.1.4 (PawnIO auto-install; 0.1.3: in-window update notice; 0.1.2: backlog items C5, C6, C8, C9, B5, B6 and the close-dialog centering fix, on top of the 2026-11-26 optimization pass).
+Status snapshot so another developer or AI agent can pick up the work. Last updated 2026-11-27, release 0.1.5 (PawnIO real-driver check, auto-start and diagnostics; 0.1.4: PawnIO auto-install; 0.1.3: in-window update notice; 0.1.2: backlog items C5, C6, C8, C9, B5, B6 and the close-dialog centering fix, on top of the 2026-11-26 optimization pass).
 
 ## What it is
 HwPulse is a Windows hardware monitor.
@@ -77,6 +77,19 @@ A full audit (architecture, leaks, RAM, threads) drove three rounds of changes. 
 - `dotnet build` 0 errors / 0 warnings after every step.
 - `--render` smoke test: 32 PNGs (en+es, all pages, 6 overlay captures, colors), clean exit, zero new `errors.log` entries.
 - Real-run dialog verification: launch, `PostMessage WM_CLOSE` to the main window (largest window of the PID), capture the new dialog HWND with a DPI-aware GDI+ utility, then pixel-classify the capture against the app palette (bottom/right rows must be `#111111`, not `#202023`; accent button ring at its edges). The two console utilities used (`imgan` pixel classifier, `shot` window capturer) were throwaway builds in `%TEMP%\opencode\` — recreate if needed.
+
+---
+
+## DONE 2026-11-27 (0.1.5)
+
+- **The PawnIO check now tests whether the driver actually works, not just whether it is registered.**
+  - **Bug report:** a friend on 0.1.4 had no CPU temperature, no PawnIO notice and an empty log.
+  - **Root cause:** 0.1.4 only checked `Services\PawnIO`. Inspecting the LHM 0.9.6 binary shows that it gates on `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PawnIO`, then opens `\?\GLOBALROOT\Device\PawnIO`. A registered service with the driver not loaded (stopped, or a broken leftover install) therefore gives silent "—" values, and 0.1.4 skipped installing.
+- **`PawnIOInstaller.IsWorking()`** = the Uninstall entry exists AND `DeviceAvailable()`. `DeviceAvailable()` calls `CreateFile` with `FILE_READ_ATTRIBUTES`: error 2, 3 or 161 means missing; anything else, including 5 (access denied for non-admin), means the device exists. Verified on the dev PC: real device → 5, fake path → 2.
+- **`TryStartDriver()`** runs inside the sensor task BEFORE `new SensorService` (LHM only checks PawnIO when it opens). If the service exists but the device doesn't, it runs `sc start PawnIO` and waits up to 3 s for the device.
+- **`EnsurePawnIOAsync`** now runs the installer whenever `!IsWorking()`, so a broken install gets reinstalled. After an exit code of 0 it re-checks that the driver works; if not, the run counts as failed (no install loop thanks to `PawnIOAutoFailed`).
+- **Diagnostics:** `ErrorLog.Info` is new. About 8 s after startup, if the app is elevated and there is no CPU temperature, it logs one `CPU diagnostics:` line with the CPU name, clock, PawnIO uninstallEntry / service state (`sc query`) / device, HVCI `Enabled`, OS version and HwPulse version. Use it for unsupported CPUs, HVCI or anti-cheat blocking, and so on.
+- **Not verified elevated:** `TryStartDriver`, the diagnostic line and the reinstall path need admin. The dev runs were non-admin.
 
 ---
 

@@ -28,9 +28,17 @@ internal static class ErrorLog
         TaskScheduler.UnobservedTaskException += (_, e) => { Write("Task", e.Exception); e.SetObserved(); };
     }
 
+    /// <summary>Anota una línea de diagnóstico (no es un error de la app, pero ayuda a explicar datos que faltan).</summary>
+    public static void Info(string where, string message) => Append($"{where}: {message}");
+
     public static void Write(string where, Exception? ex)
     {
         if (ex == null) return;
+        Append($"{where}: {ex}");
+    }
+
+    private static void Append(string text)
+    {
         try
         {
             lock (Lock)
@@ -38,7 +46,7 @@ internal static class ErrorLog
                 Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
                 var fi = new FileInfo(FilePath);
                 if (fi.Exists && fi.Length > MaxBytes) File.WriteAllText(FilePath, ""); // empezar de cero
-                File.AppendAllText(FilePath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {where}: {ex}\n\n");
+                File.AppendAllText(FilePath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {text}\n\n");
             }
         }
         catch { /* el registro nunca debe provocar otro error */ }

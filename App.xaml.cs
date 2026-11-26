@@ -115,6 +115,8 @@ public partial class App : Application
         // ExitApp/ProcessExit lo liberan igualmente (Computer.Close descarga los módulos de PawnIO).
         _sensorsTask = Task.Run(() =>
         {
+            // PawnIO instalado pero detenido: se arranca ANTES de abrir los sensores (LHM solo lo mira al abrir).
+            if (admin && args is not null && !args.Contains("--render")) PawnIOInstaller.TryStartDriver();
             var s = new SensorService(admin);
             lock (_pendingResources) _pendingResources.Add(s);
             return s;
@@ -396,7 +398,7 @@ public partial class App : Application
     /// </summary>
     private async Task EnsurePawnIOAsync(bool auto)
     {
-        if (_pawnioBusy || !_vm.IsAdmin || PawnIOInstaller.IsInstalled()) return;
+        if (_pawnioBusy || !_vm.IsAdmin || PawnIOInstaller.IsWorking()) return;
         if (auto && (_settings.PawnIODismissed)) return;
         if (auto && _settings.PawnIOAutoFailed) { _vm.SetPawnioState("failed"); return; }
 
@@ -427,6 +429,30 @@ public partial class App : Application
             _vm.SetPawnioState("failed");
         }
         finally { _pawnioBusy = false; }
+    }
+
+    /// <summary>
+    /// Con administrador y sin temperatura del CPU a los pocos segundos, deja en errors.log todo lo necesario
+    /// para saber por qué (driver, servicio, CPU, Windows, integridad de memoria). Una sola vez por inicio.
+    /// </summary>
+    private void LogCpuDiagnostics(Snapshot s)
+    {
+        if (!_vm.IsAdmin || s.CpuTempMax is not null) return;
+        _ = Task.Run(() =>
+        {
+            string hvci = "unknown";
+            try
+            {
+                using var k = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Control\DeviceGuard\Scenarios\HypervisorEnforcedCodeIntegrity");
+                hvci = k?.GetValue("Enabled")?.ToString() ?? "not set";
+            }
+            catch { }
+            ErrorLog.Info("CPU diagnostics", "no CPU temperature with admin rights. " +
+                $"CPU='{s.CpuName}'; clock={(s.CpuClockAvg is double c ? c.ToString("0") + " MHz" : "none")}; " +
+                $"PawnIO: uninstallEntry={PawnIOInstaller.UninstallEntryExists()}, service={PawnIOInstaller.ServiceState()}, " +
+                $"device={PawnIOInstaller.DeviceAvailable()}; HVCI={hvci}; OS={Environment.OSVersion.Version}; " +
+                $"HwPulse={Updater.Current}");
+        });
     }
 
     public void PawnioRetry() => _ = EnsurePawnIOAsync(auto: false);
@@ -629,6 +655,7 @@ public partial class App : Application
                     }, ct);
                     if (snap == null) continue;
                     _vm.Apply(snap);   // continuamos en el hilo de la interfaz
+                    if (_ticks == 8 && _renderDir == null) LogCpuDiagnostics(snap);
                     if (_tray != null) _tray.Text = _vm.TrayText;
                     // El JSON del panel web solo si hay alguien conectado (SSE o polling reciente).
                     if (_web != null && _web.NeedsJson) _web.SetJson(BuildWebJson(snap));

@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.IO;
 using System.Net.Http;
 using System.Security.Cryptography;
@@ -26,15 +27,84 @@ public static class PawnIOInstaller
 
     public enum Result { Installed, RebootRequired, Failed }
 
-    /// <summary>El servicio del driver está registrado (instalado), aunque esté detenido: lo arranca LHM.</summary>
-    public static bool IsInstalled()
+    // LibreHardwareMonitorLib 0.9.6 decide si hay PawnIO mirando la clave de desinstalación y luego abre
+    // el dispositivo del driver directamente. Si el servicio existe pero el driver no está cargado (detenido,
+    // instalación rota), no hay dispositivo: sin temperatura ni reloj del CPU, y sin ningún error.
+    private const string DevicePath = @"\\?\GLOBALROOT\Device\PawnIO";
+
+    /// <summary>El servicio del driver está registrado en Windows.</summary>
+    public static bool ServiceExists() => KeyExists(@"SYSTEM\CurrentControlSet\Services\PawnIO");
+
+    /// <summary>Hay una instalación registrada (lo que mira LHM).</summary>
+    public static bool UninstallEntryExists() => KeyExists(@"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\PawnIO");
+
+    private static bool KeyExists(string path)
+    {
+        try { using var key = Registry.LocalMachine.OpenSubKey(path); return key != null; }
+        catch { return false; }
+    }
+
+    /// <summary>El driver está cargado y su dispositivo existe (lo que de verdad necesita LHM).</summary>
+    public static bool DeviceAvailable()
+    {
+        // Solo se piden atributos: basta para saber si el dispositivo existe, sin usarlo.
+        var h = CreateFile(DevicePath, 0x80 /* FILE_READ_ATTRIBUTES */, 3, IntPtr.Zero, 3 /* OPEN_EXISTING */, 0, IntPtr.Zero);
+        if (h != new IntPtr(-1)) { CloseHandle(h); return true; }
+        int err = Marshal.GetLastWin32Error();
+        return err is not (2 or 3 or 161); // no encontrado / ruta no encontrada / ruta inválida
+    }
+
+    /// <summary>Está bien instalado y funcionando: no hace falta hacer nada.</summary>
+    public static bool IsWorking() => UninstallEntryExists() && DeviceAvailable();
+
+    /// <summary>Estado del servicio según sc.exe (RUNNING, STOPPED…), o "missing"/"unknown".</summary>
+    public static string ServiceState()
+    {
+        if (!ServiceExists()) return "missing";
+        try
+        {
+            var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "sc.exe"), "query PawnIO")
+            { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true };
+            using var p = Process.Start(psi)!;
+            string output = p.StandardOutput.ReadToEnd();
+            p.WaitForExit(5000);
+            foreach (var line in output.Split('\n'))
+                if (line.Contains("STATE", StringComparison.Ordinal))
+                    return line.Split(' ', StringSplitOptions.RemoveEmptyEntries).LastOrDefault()?.Trim() ?? "unknown";
+        }
+        catch { }
+        return "unknown";
+    }
+
+    /// <summary>
+    /// Si el servicio existe pero el driver no está cargado, lo arranca (sc start) y espera a que aparezca
+    /// el dispositivo. Se llama ANTES de abrir los sensores, porque LHM solo mira PawnIO al abrir.
+    /// </summary>
+    public static void TryStartDriver()
     {
         try
         {
-            using var key = Registry.LocalMachine.OpenSubKey(@"SYSTEM\CurrentControlSet\Services\PawnIO");
-            return key != null;
+            if (DeviceAvailable() || !ServiceExists()) return;
+            var psi = new ProcessStartInfo(Path.Combine(Environment.SystemDirectory, "sc.exe"), "start PawnIO")
+            { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true };
+            using (var p = Process.Start(psi)!) { p.StandardOutput.ReadToEnd(); p.WaitForExit(5000); }
+            for (int i = 0; i < 30 && !DeviceAvailable(); i++) Thread.Sleep(100);
         }
-        catch { return true; } // sin poder leer el registro, no intentamos instalar nada
+        catch (Exception ex) { ErrorLog.Write("PawnIO start", ex); }
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern IntPtr CreateFile(string name, uint access, uint share, IntPtr security, uint disposition, uint flags, IntPtr template);
+
+    [DllImport("kernel32.dll")]
+    private static extern bool CloseHandle(IntPtr h);
+
+    /// <summary>Tras instalar, el driver puede tardar un momento en crear su dispositivo.</summary>
+    private static bool WaitWorking()
+    {
+        TryStartDriver();
+        for (int i = 0; i < 30 && !IsWorking(); i++) Thread.Sleep(100);
+        return IsWorking();
     }
 
     public static async Task<Result> InstallAsync(CancellationToken ct = default)
@@ -71,7 +141,7 @@ public static class PawnIOInstaller
             // 0 = instalado; 3010 = ERROR_SUCCESS_REBOOT_REQUIRED (instalado, falta reiniciar).
             return p.ExitCode switch
             {
-                0 => IsInstalled() ? Result.Installed : Result.Failed,
+                0 => WaitWorking() ? Result.Installed : Result.Failed,
                 3010 => Result.RebootRequired,
                 _ => throw new InvalidOperationException($"PawnIO installer exit code {p.ExitCode}."),
             };
