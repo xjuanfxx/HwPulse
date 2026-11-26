@@ -57,6 +57,16 @@ internal static class Native
         DwmSetWindowAttribute(hwnd, 34, ref border, sizeof(int)); // DWMWA_BORDER_COLOR
     }
 
+    /// <summary>Mismo trato que <see cref="StyleWindowFrame"/> pero para menús emergentes de la bandeja:
+    /// modo oscuro y esquinas redondeadas de Windows 11, para que encaje con los demás menús del sistema.
+    /// El borde lo dibuja el renderer propio, no el DWM; en Windows 10 la llamada es un no-op.</summary>
+    public static void StyleMenuFrame(IntPtr hwnd)
+    {
+        int dark = 1, round = 2;
+        DwmSetWindowAttribute(hwnd, 20, ref dark, sizeof(int));   // DWMWA_USE_IMMERSIVE_DARK_MODE
+        DwmSetWindowAttribute(hwnd, 33, ref round, sizeof(int));  // DWMWA_WINDOW_CORNER_PREFERENCE
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     private struct SYSTEM_POWER_STATUS
     {

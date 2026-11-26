@@ -4,7 +4,9 @@ using System.Windows.Forms;
 
 namespace HwPulse;
 
-/// <summary>Menú de la bandeja con los mismos colores que la app (fondo #111111, bordes #262626).</summary>
+/// <summary>Menú de la bandeja con los mismos colores que la app (fondo #111111, bordes #262626).
+/// En Windows 11 se le piden además al DWM las esquinas redondeadas y el modo oscuro, para que encaje
+/// con los demás menús emergentes del sistema.</summary>
 internal static class DarkMenu
 {
     public static readonly Color Back = Color.FromArgb(17, 17, 17);
@@ -12,6 +14,9 @@ internal static class DarkMenu
     public static readonly Color Border = Color.FromArgb(48, 48, 48);
     public static readonly Color Text = Color.FromArgb(229, 229, 229);
     public static readonly Color Muted = Color.FromArgb(140, 140, 140);
+
+    private static Font? _font; // compartida: antes se creaba una por menú y la del menú viejo se perdía sin liberar
+    private static Font MenuFont => _font ??= new Font("Segoe UI", 9.5f);
 
     public static ContextMenuStrip Create()
     {
@@ -21,9 +26,12 @@ internal static class DarkMenu
             BackColor = Back,
             ForeColor = Text,
             ShowImageMargin = false,
-            Padding = new Padding(4),
-            Font = new Font("Segoe UI", 9.5f),
+            Padding = new Padding(6, 4, 6, 4),
+            Font = MenuFont,
         };
+        // El handle del desplegable se crea la primera vez que se muestra: ahí se aplican el redondeo y
+        // el modo oscuro del DWM (idempotente si el handle se recrea, no-op en Windows 10).
+        m.HandleCreated += (_, _) => Native.StyleMenuFrame(m.Handle);
         return m;
     }
 
@@ -33,10 +41,13 @@ internal static class DarkMenu
         {
             ForeColor = Text,
             ShortcutKeyDisplayString = shortcut,
-            Padding = new Padding(6, 5, 6, 5),
+            Padding = new Padding(8, 6, 8, 6),
         };
         return it;
     }
+
+    /// <summary>Separador con aire alrededor: el de serie queda demasiado pegado a los items.</summary>
+    public static ToolStripSeparator Separator() => new() { Margin = new Padding(0, 3, 0, 3) };
 
     private sealed class Renderer : ToolStripProfessionalRenderer
     {
@@ -44,7 +55,8 @@ internal static class DarkMenu
 
         protected override void OnRenderMenuItemBackground(ToolStripItemRenderEventArgs e)
         {
-            var r = new Rectangle(2, 0, e.Item.Width - 4, e.Item.Height);
+            // Píxel de aire arriba y abajo: los resaltes de dos items contiguos no se tocan.
+            var r = new Rectangle(2, 1, e.Item.Width - 4, e.Item.Height - 2);
             using var b = new SolidBrush(e.Item.Selected ? Hover : Back);
             e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
             using var path = Rounded(r, 4);

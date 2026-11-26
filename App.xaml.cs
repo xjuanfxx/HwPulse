@@ -445,10 +445,14 @@ public partial class App : Application
         _overlay.ApplyScale(_settings.OverlayScale);
         _vm.OverlayCompact = true;
         Save(_overlay.SourceContent, $"{Loc.I.Lang}-overlay-compact.png");
-        // La imagen supermuestreada tal como la muestra la ventana
+        // La imagen supermuestreada tal como la muestra la ventana. El bitmap lo siembra RenderCore con el
+        // estilo activo en ese momento; sin este refresco mostraría el último dibujado (modo render: no
+        // hay paso de dispatcher que lo actualice entre medias).
+        _overlay.RenderNow();
         _overlay.UpdateLayout();
         Save((FrameworkElement)_overlay.Content, $"{Loc.I.Lang}-overlay-window.png");
         if (prevStyle) _vm.OverlayPanel = true;
+        _overlay.RenderNow();
         _overlay.UpdateLayout();
         Save((FrameworkElement)_overlay.Content, $"{Loc.I.Lang}-overlay-window-panel.png");
         var cw = new ColorsWindow(_vm) { Owner = _main };
@@ -607,7 +611,7 @@ public partial class App : Application
         menu.Items.Add(DarkMenu.Item(Loc.T("TrayCorner"), "Ctrl+Shift+F11", (_, _) => _vm.CycleCorner()));
         if (_web?.Url is string url)
             menu.Items.Add(DarkMenu.Item(Loc.T("TrayWeb"), null, (_, _) => OpenUrl(url)));
-        menu.Items.Add(new WinForms.ToolStripSeparator());
+        menu.Items.Add(DarkMenu.Separator());
         menu.Items.Add(DarkMenu.Item(Loc.T("TrayExit"), null, (_, _) => ExitApp()));
         _tray.ContextMenuStrip = menu;
         old?.Dispose();

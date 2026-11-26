@@ -51,11 +51,14 @@ public sealed class FpsMonitor : IDisposable
         lock (_netProviderLock)
         {
             if (on == _netProviderOn) return;
-            _netProviderOn = on;
             try
             {
                 if (on) _session.EnableProvider(KernelNetwork, TraceEventLevel.Informational);
                 else _session.DisableProvider(KernelNetwork);
+                // Solo tras el éxito: si EnableProvider falla por algo transitorio, el flag sigue en el
+                // estado real y el siguiente tick reintenta (antes quedaba pegado y la red por proceso
+                // moría en silencio toda la sesión).
+                _netProviderOn = on;
             }
             catch { /* ETW no disponible: la red por proceso queda a cero */ }
         }
