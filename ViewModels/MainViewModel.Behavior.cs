@@ -1,4 +1,5 @@
 using System.Windows;
+using System.Windows.Media;
 
 namespace HwPulse;
 
@@ -90,5 +91,28 @@ public sealed partial class MainViewModel
     {
         _bannerVersion = version;
         Raise(nameof(UpdateBannerVisibility)); Raise(nameof(UpdateBannerVersion)); Raise(nameof(UpdateBannerAction));
+    }
+
+    // ------------------------------------------------------------------ driver PawnIO
+    // Estados del aviso: null (oculto), "installing", "done", "reboot", "failed".
+    private string? _pawnio;
+    public Visibility PawnioBannerVisibility => _pawnio != null ? Visibility.Visible : Visibility.Collapsed;
+    public string PawnioText => _pawnio switch
+    {
+        "installing" => Loc.T("PawnioInstalling"),
+        "done" => Loc.T("PawnioDone"),
+        "reboot" => Loc.T("PawnioReboot"),
+        "failed" => Loc.T("PawnioFailed"),
+        _ => "",
+    };
+    public Visibility PawnioFailedVisibility => _pawnio == "failed" ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility PawnioDismissVisibility => _pawnio is "failed" or "reboot" ? Visibility.Visible : Visibility.Collapsed;
+    public Brush PawnioBrush => _pawnio == "failed" ? Fmt.Warn : (Brush)Application.Current.FindResource("Accent");
+
+    public void SetPawnioState(string? state)
+    {
+        _pawnio = state;
+        Raise(nameof(PawnioBannerVisibility)); Raise(nameof(PawnioText)); Raise(nameof(PawnioFailedVisibility));
+        Raise(nameof(PawnioDismissVisibility)); Raise(nameof(PawnioBrush));
     }
 }

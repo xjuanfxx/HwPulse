@@ -64,6 +64,13 @@ public sealed class AppSettings
     /// <summary>Versión cuyo aviso dentro de la ventana se cerró con la ×: no vuelve a salir hasta otra más nueva.</summary>
     public string? UpdateDismissed { get; set; }
 
+    /// <summary>La instalación automática de PawnIO ya falló una vez: no se reintenta sola en cada inicio
+    /// (el aviso ofrece reintentar o instalarlo a mano).</summary>
+    public bool PawnIOAutoFailed { get; set; }
+
+    /// <summary>El usuario ocultó el aviso de PawnIO: no vuelve a salir.</summary>
+    public bool PawnIODismissed { get; set; }
+
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "HwPulse", "settings.json");
 

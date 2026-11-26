@@ -1,6 +1,6 @@
 # HwPulse: handoff notes
 
-Status snapshot so another developer or AI agent can pick up the work. Last updated 2026-11-27, release 0.1.3 (in-window update notice; 0.1.2: backlog items C5, C6, C8, C9, B5, B6 and the close-dialog centering fix, on top of the 2026-11-26 optimization pass).
+Status snapshot so another developer or AI agent can pick up the work. Last updated 2026-11-27, release 0.1.4 (PawnIO auto-install; 0.1.3: in-window update notice; 0.1.2: backlog items C5, C6, C8, C9, B5, B6 and the close-dialog centering fix, on top of the 2026-11-26 optimization pass).
 
 ## What it is
 HwPulse is a Windows hardware monitor.
@@ -28,7 +28,7 @@ dotnet build -c Debug          # Debug build: asInvoker manifest, no UAC prompt
 bin\Debug\net10.0-windows\HwPulse.exe --no-elevate --render <dir>
 ```
 - **`--render <dir>`:** renders every page to PNG and writes `en-fit.txt`/`es-fit.txt`. Every page except Sensors must say `OK` (no scrolling). Expect **32 files** (30 PNG + `en-fit.txt` + `es-fit.txt`) and the process must **exit on its own**. If a PNG is missing, something measured 0 (see gotcha 5). Works even with the overlay hidden (`OverlayVisible: false` in `%AppData%\HwPulse\settings.json`).
-- **Other dev flags:** `--fake-update <ver>`, `--timing`, `--bench <file>`, `--dump <file>`, `--font "<name>"`, `--minimized`, `--no-elevate`, `--updated` (used internally after a self-update).
+- **Other dev flags:** `--fake-update <ver>`, `--fake-pawnio <state>`, `--timing`, `--bench <file>`, `--dump <file>`, `--font "<name>"`, `--minimized`, `--no-elevate`, `--updated` (used internally after a self-update).
 - **Release build:**
   ```powershell
   dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:PublishReadyToRun=true -o publish
@@ -77,6 +77,23 @@ A full audit (architecture, leaks, RAM, threads) drove three rounds of changes. 
 - `dotnet build` 0 errors / 0 warnings after every step.
 - `--render` smoke test: 32 PNGs (en+es, all pages, 6 overlay captures, colors), clean exit, zero new `errors.log` entries.
 - Real-run dialog verification: launch, `PostMessage WM_CLOSE` to the main window (largest window of the PID), capture the new dialog HWND with a DPI-aware GDI+ utility, then pixel-classify the capture against the app palette (bottom/right rows must be `#111111`, not `#202023`; accent button ring at its edges). The two console utilities used (`imgan` pixel classifier, `shot` window capturer) were throwaway builds in `%TEMP%\opencode\` — recreate if needed.
+
+---
+
+## DONE 2026-11-27 (0.1.4)
+
+- **PawnIO is installed automatically** (`Core/PawnIOInstaller.cs`, `App.EnsurePawnIOAsync`).
+  - **Cause it fixes:** LibreHardwareMonitorLib 0.9.6 needs the PawnIO driver for CPU temperature, clock and power, but never installs it. Without it those values stay "—" and nothing is logged. This was reported by a friend of the owner. The owner's PC had PawnIO 2.1.0 installed separately (probably by LibreHardwareMonitor).
+  - **Detection:** the registry key `HKLM\SYSTEM\CurrentControlSet\Services\PawnIO` exists. If the registry can't be read, the app assumes PawnIO is installed and doesn't try.
+  - **Flow:**
+    1. After the sensors open, only when elevated and not in `--render`, a notice appears: "Installing the PawnIO driver…".
+    2. The app downloads the official installer, pinned to v2.2.0: `https://github.com/namazso/PawnIO.Setup/releases/download/2.2.0/PawnIO_setup.exe`. Its SHA-256 (`1F519A22…3032`) matches the winget manifest, and its Authenticode signer is CN=namazso.eu.
+    3. The file stays open without share-write/delete while it is hashed and run, so it can't be swapped (TOCTOU).
+    4. It runs `-install -silent`. Exit code 0 means installed: the notice says "Restarting…" and the app relaunches through `Updater.Relaunch` (`--updated`) so LHM reopens with the driver. Exit code 3010 shows "Restart Windows…".
+  - **On failure:** the error goes to `errors.log`, `AppSettings.PawnIOAutoFailed = true`, and the notice offers Retry, Install manually (pawnio.eu) and ×. The install is not retried automatically on later launches. The × sets `PawnIODismissed` and the notice never returns.
+  - **Updating PawnIO:** bump `Version`, `Url` and `Sha256` together in `PawnIOInstaller.cs`. Take the hash from winget-pkgs `manifests/n/namazso/PawnIO/<ver>/namazso.PawnIO.installer.yaml`.
+  - **Dev flag:** `--fake-pawnio installing|done|reboot|failed` shows the notice state; it never installs anything.
+  - **Not verified end to end:** the real silent install was not run, because the dev PC already has PawnIO 2.1 and running it would upgrade the owner's driver. Download and hash were verified manually. Test on a PC without PawnIO.
 
 ---
 
@@ -141,6 +158,7 @@ A full audit (architecture, leaks, RAM, threads) drove three rounds of changes. 
 - `--render`: `ApplyScale(2)` is a no-op if the user's `OverlayScale` is exactly 2.0 (one PNG variant less); a future regression that measures 0 now manifests as a missing PNG (silent skip in `Save`).
 
 ## Carried over from previous notes (still pending)
+- Test the PawnIO auto-install on a PC that doesn't have it (the friend's PC).
 - Test a real self-update (open 0.1.2: the notice should offer 0.1.3; "Update now" should replace the exe and restart).
 - Test in a real game: FPS stability (sliding-window logic is new-ish), "Start with Windows" in the elevated Release build, a real self-update.
 - Code signing (removes Defender/SmartScreen warnings; the owner must do the submission).

@@ -115,6 +115,9 @@ public partial class MainWindow : Window
     private void Update_Click(object sender, RoutedEventArgs e) => CurrentApp.UpdateClicked();
     private void UpdateNotes_Click(object sender, RoutedEventArgs e) => CurrentApp.OpenUpdateNotes();
     private void UpdateDismiss_Click(object sender, RoutedEventArgs e) => CurrentApp.DismissUpdateBanner();
+    private void PawnioRetry_Click(object sender, RoutedEventArgs e) => CurrentApp.PawnioRetry();
+    private void PawnioManual_Click(object sender, RoutedEventArgs e) => CurrentApp.PawnioManual();
+    private void PawnioDismiss_Click(object sender, RoutedEventArgs e) => CurrentApp.PawnioDismiss();
 
     private void OverlayQuick_Click(object sender, RoutedEventArgs e) => _vm.OverlayVisible = !_vm.OverlayVisible;
     private void Minimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;

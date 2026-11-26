@@ -147,6 +147,10 @@ public partial class App : Application
         Updater.CleanupOld();
         if (_renderDir == null) StartUpdateChecks();
 
+        // --fake-pawnio installing|done|reboot|failed: muestra ese estado del aviso de PawnIO (desarrollo).
+        int fakePawnio = Array.IndexOf(args, "--fake-pawnio");
+        if (fakePawnio >= 0 && fakePawnio + 1 < args.Length) _vm.SetPawnioState(args[fakePawnio + 1]);
+
         // --fake-update 9.9.9: simula una versión nueva para ver el aviso (desarrollo; no descarga nada).
         int fakeIdx = Array.IndexOf(args, "--fake-update");
         if (fakeIdx >= 0 && fakeIdx + 1 < args.Length)
@@ -377,7 +381,61 @@ public partial class App : Application
         // comprobación a propósito: el recurso ya vive en su campo, así que ExitApp/ProcessExit lo
         // disponen aunque la tarea terminara después de que ExitApp pasara por la lista de pendientes.
         if (IsExiting) return;
+        if (_renderDir == null) _ = EnsurePawnIOAsync(auto: true);
         await PollLoop(_cts.Token);
+    }
+
+    // ------------------------------------------------------------------ driver PawnIO
+    private bool _pawnioBusy;
+
+    /// <summary>
+    /// Sin PawnIO, LibreHardwareMonitor no puede leer temperatura/reloj/potencia del CPU y no avisa de nada.
+    /// Al iniciar (con admin) se instala solo, con un aviso arriba de la ventana. Si sale bien se reinicia la
+    /// app para abrir los sensores con el driver; si Windows pide reiniciar, se avisa. Si falla, no se
+    /// reintenta solo en cada inicio: el aviso ofrece reintentar o instalarlo a mano.
+    /// </summary>
+    private async Task EnsurePawnIOAsync(bool auto)
+    {
+        if (_pawnioBusy || !_vm.IsAdmin || PawnIOInstaller.IsInstalled()) return;
+        if (auto && (_settings.PawnIODismissed)) return;
+        if (auto && _settings.PawnIOAutoFailed) { _vm.SetPawnioState("failed"); return; }
+
+        _pawnioBusy = true;
+        _vm.SetPawnioState("installing");
+        try
+        {
+            var result = await PawnIOInstaller.InstallAsync(_cts.Token);
+            if (result == PawnIOInstaller.Result.Failed) throw new InvalidOperationException("PawnIO service not found after install.");
+            _settings.PawnIOAutoFailed = false;
+            SaveSoon();
+            if (result == PawnIOInstaller.Result.RebootRequired) { _vm.SetPawnioState("reboot"); return; }
+
+            // Instalado: los sensores se abrieron sin el driver, así que se reinicia la app para releerlos.
+            _vm.SetPawnioState("done");
+            await Task.Delay(1500);
+            if (IsExiting) return;
+            _settings.Save();
+            Updater.Relaunch(minimized: _main == null || !_main.IsVisible);
+            ExitApp();
+        }
+        catch (OperationCanceledException) { /* la app se está cerrando */ }
+        catch (Exception ex)
+        {
+            ErrorLog.Write("PawnIO", ex);
+            _settings.PawnIOAutoFailed = true;
+            SaveSoon();
+            _vm.SetPawnioState("failed");
+        }
+        finally { _pawnioBusy = false; }
+    }
+
+    public void PawnioRetry() => _ = EnsurePawnIOAsync(auto: false);
+    public void PawnioManual() => OpenUrl(PawnIOInstaller.ManualUrl);
+    public void PawnioDismiss()
+    {
+        _settings.PawnIODismissed = true;
+        SaveSoon();
+        _vm.SetPawnioState(null);
     }
 
     // ------------------------------------------------------------------ sesión ETW de FPS (bajo demanda)
