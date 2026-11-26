@@ -23,7 +23,7 @@ public partial class App : Application
     private readonly CancellationTokenSource _cts = new();
     private readonly ProcessMonitor _procMon = new();
     private readonly GpuProcessMonitor _gpuMon = new();
-    private FpsMonitor? _fps;
+    private volatile FpsMonitor? _fps; // escrito por la tarea de EnsureFpsMonitor, leído por UI y ProcessExit
     private bool _extrasStarted;
     private Task<SensorService>? _sensorsTask;
     private int _procTick;
@@ -351,7 +351,9 @@ public partial class App : Application
         // La sesión ETW de FPS ya no se crea aquí: la crea EnsureFpsMonitor (llamado desde el bucle de
         // polling) solo cuando alguien la necesita. Sin eso, TraceEvent y la captura de eventos corrían
         // siempre, con admin, aunque el usuario no usara FPS ni la página de Red.
-        // ExitApp pudo correr mientras los sensores se abrían (todo ya quedó liberado): no arrancar el bucle.
+        // ExitApp pudo correr mientras los sensores se abrían. La asignación de arriba va ANTES de esta
+        // comprobación a propósito: el recurso ya vive en su campo, así que ExitApp/ProcessExit lo
+        // disponen aunque la tarea terminara después de que ExitApp pasara por la lista de pendientes.
         if (IsExiting) return;
         await PollLoop(_cts.Token);
     }
@@ -360,15 +362,17 @@ public partial class App : Application
     private bool _fpsTried; // un solo intento, como antes: si ETW falla, el overlay muestra "—"
 
     /// <summary>Crea la sesión ETW de FPS solo si alguien la usa ahora: el overlay visible con FPS o
-    /// frametime marcados, o la página de Red abierta (la red por proceso se lee de los eventos
-    /// Kernel-Network de esa misma sesión). El resto del tiempo no hay sesión: ni RAM de TraceEvent
-    /// ni eventos de present de todo el sistema.</summary>
+    /// frametime marcados, la página de Red abierta (la red por proceso se lee de los eventos
+    /// Kernel-Network de esa misma sesión) o un cliente del panel web conectado (el dashboard también
+    /// muestra los FPS). El resto del tiempo no hay sesión: ni RAM de TraceEvent ni eventos de present
+    /// de todo el sistema.</summary>
     private void EnsureFpsMonitor()
     {
         if (_fps != null || _fpsTried || !_vm.IsAdmin) return;
         bool overlayFps = _vm.OverlayVisible && _vm.OverlayHasFps;
         bool netPage = _vm.UiVisible && _vm.CurrentPage == "Network";
-        if (!overlayFps && !netPage) return;
+        bool webFps = _web?.HasClients == true;
+        if (!overlayFps && !netPage && !webFps) return;
         _fpsTried = true;
         _ = Task.Run(() =>
         {

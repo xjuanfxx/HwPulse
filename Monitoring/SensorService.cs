@@ -216,48 +216,58 @@ public sealed class SensorService : IDisposable
     private void RebuildMap()
     {
         _mapDirty = false;
-        _mapVersion++;
-        var top = _pc.Hardware; // una sola lista nueva por reconstrucción (LHM crea una por acceso)
-        _topCount = top.Count;
-
-        var flat = new List<IHardware>(top.Count * 2);
-        var disks = new List<IHardware>();
-        var adapters = new List<IHardware>();
-        _cpuHw = _gpuNv = _gpuAmd = _gpuI = _memHw = _virtHw = _batHw = null;
-        foreach (var h in top)
+        try
         {
-            AddFlat(h);
-            switch (h.HardwareType)
+            _mapVersion++;
+            var top = _pc.Hardware; // una sola lista nueva por reconstrucción (LHM crea una por acceso)
+            _topCount = top.Count;
+
+            var flat = new List<IHardware>(top.Count * 2);
+            var disks = new List<IHardware>();
+            var adapters = new List<IHardware>();
+            _cpuHw = _gpuNv = _gpuAmd = _gpuI = _memHw = _virtHw = _batHw = null;
+            foreach (var h in top)
             {
-                case HardwareType.Cpu: _cpuHw ??= h; break;
-                case HardwareType.GpuNvidia: _gpuNv ??= h; break;
-                case HardwareType.GpuAmd: _gpuAmd ??= h; break;
-                case HardwareType.GpuIntel: _gpuI ??= h; break;
-                case HardwareType.Memory:
-                    if (h.Name.Contains("Virtual", StringComparison.OrdinalIgnoreCase)) _virtHw ??= h;
-                    else _memHw ??= h;
-                    break;
-                case HardwareType.Storage: disks.Add(h); break;
-                case HardwareType.Network:
-                    if (!FilterAdapter.IsMatch(h.Name)) adapters.Add(h); // filtros QoS: repiten el tráfico
-                    break;
-                case HardwareType.Battery: _batHw ??= h; break;
+                AddFlat(h);
+                switch (h.HardwareType)
+                {
+                    case HardwareType.Cpu: _cpuHw ??= h; break;
+                    case HardwareType.GpuNvidia: _gpuNv ??= h; break;
+                    case HardwareType.GpuAmd: _gpuAmd ??= h; break;
+                    case HardwareType.GpuIntel: _gpuI ??= h; break;
+                    case HardwareType.Memory:
+                        if (h.Name.Contains("Virtual", StringComparison.OrdinalIgnoreCase)) _virtHw ??= h;
+                        else _memHw ??= h;
+                        break;
+                    case HardwareType.Storage: disks.Add(h); break;
+                    case HardwareType.Network:
+                        if (!FilterAdapter.IsMatch(h.Name)) adapters.Add(h); // filtros QoS: repiten el tráfico
+                        break;
+                    case HardwareType.Battery: _batHw ??= h; break;
+                }
+            }
+            _flat = flat.ToArray();
+            _disks = disks.ToArray();
+            _netAdapters = adapters.ToArray();
+
+            // Sensores aplanados (el propio + subhardware), de abajo hacia arriba para que los hijos existan ya.
+            for (int i = flat.Count - 1; i >= 0; i--) _flattenedSensors[flat[i]] = BuildFlattened(flat[i]);
+
+            void AddFlat(IHardware h)
+            {
+                flat.Add(h);
+                Watch(h);
+                RefreshSensors(h);
+                var subs = h.SubHardware;
+                for (int i = 0; i < subs.Length; i++) AddFlat(subs[i]);
             }
         }
-        _flat = flat.ToArray();
-        _disks = disks.ToArray();
-        _netAdapters = adapters.ToArray();
-
-        // Sensores aplanados (el propio + subhardware), de abajo hacia arriba para que los hijos existan ya.
-        for (int i = flat.Count - 1; i >= 0; i--) _flattenedSensors[flat[i]] = BuildFlattened(flat[i]);
-
-        void AddFlat(IHardware h)
+        catch
         {
-            flat.Add(h);
-            Watch(h);
-            RefreshSensors(h);
-            var subs = h.SubHardware;
-            for (int i = 0; i < subs.Length; i++) AddFlat(subs[i]);
+            // Un hardware defectuoso no puede dejar la caché a medio construir marcada como válida:
+            // se vuelve a marcar sucia y el próximo ciclo reintenta (el error lo registra el bucle).
+            _mapDirty = true;
+            throw;
         }
     }
 

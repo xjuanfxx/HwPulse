@@ -94,17 +94,21 @@ public sealed class WebServer : IDisposable
         });
     }
 
-    /// <summary>Hay que serializar la lectura nueva: hay algún cliente SSE conectado, alguien ha pedido
-    /// /api/stats hace poco, o todavía no se ha enviado ninguna lectura. Evita construir el JSON cada
-    /// segundo cuando no hay nadie mirando el panel (viene activado por defecto).</summary>
-    public bool NeedsJson
+    /// <summary>Hay algún cliente mirando el panel ahora mismo: un SSE conectado o un /api/stats reciente
+    /// (el navegador que no soporta EventSource y pregunta cada segundo).</summary>
+    public bool HasClients
     {
         get
         {
             lock (_streams)
-                return _streams.Count > 0 || ReferenceEquals(_json, EmptyJson) || (DateTime.UtcNow - _lastPollUtc).TotalSeconds < 10;
+                return _streams.Count > 0 || (DateTime.UtcNow - _lastPollUtc).TotalSeconds < 10;
         }
     }
+
+    /// <summary>Hay que serializar la lectura nueva: hay algún cliente conectado (SSE o polling reciente),
+    /// o todavía no se ha enviado ninguna lectura. Evita construir el JSON cada segundo cuando no hay
+    /// nadie mirando el panel (viene activado por defecto).</summary>
+    public bool NeedsJson => HasClients || ReferenceEquals(_json, EmptyJson);
 
     private const int MaxStreams = 16; // límite de pantallas conectadas a la vez (evita agotar recursos)
 
