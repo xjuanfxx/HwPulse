@@ -104,6 +104,10 @@ A full audit (architecture, leaks, RAM, threads) drove three rounds of changes. 
   - Each failure step logs once to errors.log (`NVML:` dll not found / `nvmlInit_v2` code / `GetPowerUsage` code).
   - `--dump` prints `NVML (direct): X W`. Verified on the owner's PC: 20.2 W, consistent with LHM's 13.9–20.5 W.
   - **Result on the 4060:** `nvmlDeviceGetPowerUsage` returned code 3 (`NVML_ERROR_NOT_SUPPORTED`), and `nvidia-smi` reports `power.draw`, `power.draw.average` and `power.draw.instant` as `[N/A]` (driver 621.14; `power.limit` = 115 W). That GPU/driver combination does not report power at all, so no tool can show it. Not a HwPulse bug; the fallback stays for other machines.
+- **Clean CI after 0.1.6 (committed after the v0.1.6 tag, ships with the next release):**
+  - The workflow uses `actions/checkout@v7` and `actions/setup-dotnet@v6` (Node 24). The v4 actions caused the "Node.js 20 is deprecated" warning.
+  - `Updater.IsSingleFile` now checks whether `HwPulse.dll` sits next to the exe (`AppContext.BaseDirectory`) instead of `Assembly.Location` being empty, which removes the IL3000 warning.
+  - Verified: 0 warnings in the single-file and folder publishes, and detection is correct in both.
 - **Honest total power:** when a GPU exists but reports no power, the Power card label becomes "Total (CPU only)" (`TotalLabel`) instead of presenting the CPU watts as the system total. The GPU power row and the GPU page "Power" readout explain "Not reported by this GPU or its driver" (`GpuPowerTip` as tooltip / sub-text).
 
 

@@ -30,7 +30,9 @@ public static class Updater
     }
 
     /// <summary>Un solo .exe (lo que se actualiza solo). La versión en carpeta (zip) solo abre la página.</summary>
-    public static bool IsSingleFile => string.IsNullOrEmpty(typeof(Updater).Assembly.Location);
+    // En el exe de un solo archivo HwPulse.dll va dentro del .exe; en la versión en carpeta está al lado.
+    // (Antes se miraba Assembly.Location vacío, que funciona pero el compilador lo marca como advertencia IL3000.)
+    public static bool IsSingleFile => !File.Exists(Path.Combine(AppContext.BaseDirectory, "HwPulse.dll"));
 
     private static HttpClient NewClient(TimeSpan timeout)
     {
