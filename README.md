@@ -30,6 +30,17 @@ dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile
 
 Debug builds run without elevation (`app.dev.manifest`). For UI work, add `--no-elevate`.
 
+## Layout
+
+| Folder | Contents |
+|---|---|
+| `Views/` | Main window, overlay, color picker |
+| `ViewModels/` | `MainViewModel` (split by page) |
+| `Controls/` | Charts, readouts, dark tray menu |
+| `Monitoring/` | Sensors, FPS/network ETW, processes, web server |
+| `Core/` | Settings, localization, formatting, Win32 interop, logging |
+| `Assets/`, `Fonts/`, `Web/` | Icon, Inter font, web dashboard page |
+
 ## Credits
 
 - Sensors: LibreHardwareMonitorLib (MPL-2.0)
