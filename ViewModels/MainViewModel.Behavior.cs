@@ -1,3 +1,5 @@
+using System.Windows;
+
 namespace HwPulse;
 
 /// <summary>Ajustes de comportamiento de la ventana: qué hace la X e iniciar con Windows.</summary>
@@ -69,6 +71,24 @@ public sealed partial class MainViewModel
     public void SetUpdateState(string key, string? version = null, bool busy = false)
     {
         _updateKey = key; _updateVersion = version; _updateBusy = busy;
-        Raise(nameof(UpdateText)); Raise(nameof(UpdateReady)); Raise(nameof(UpdateEnabled));
+        Raise(nameof(UpdateText)); Raise(nameof(UpdateReady)); Raise(nameof(UpdateEnabled)); Raise(nameof(UpdateBannerAction));
+    }
+
+    // Aviso de actualización arriba de la ventana (como el de "sin administrador"). Se mantiene visible
+    // mientras se descarga o si falla, para poder reintentar desde ahí mismo.
+    private string? _bannerVersion;
+    public Visibility UpdateBannerVisibility => _bannerVersion != null ? Visibility.Visible : Visibility.Collapsed;
+    public string UpdateBannerVersion => _bannerVersion != null ? "HwPulse " + _bannerVersion : "";
+    public string UpdateBannerAction => _updateKey switch
+    {
+        "UpdateDownloading" => Loc.T("UpdateDownloading"),
+        "UpdateFailed" => Loc.T("UpdateBannerRetry"),
+        _ => Loc.T("UpdateBannerNow"),
+    };
+
+    public void ShowUpdateBanner(string? version)
+    {
+        _bannerVersion = version;
+        Raise(nameof(UpdateBannerVisibility)); Raise(nameof(UpdateBannerVersion)); Raise(nameof(UpdateBannerAction));
     }
 }

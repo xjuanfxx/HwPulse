@@ -1,6 +1,6 @@
 # HwPulse: handoff notes
 
-Status snapshot so another developer or AI agent can pick up the work. Last updated 2026-11-27, release 0.1.2 (backlog items C5, C6, C8, C9, B5, B6 and the close-dialog centering fix, on top of the 2026-11-26 optimization pass).
+Status snapshot so another developer or AI agent can pick up the work. Last updated 2026-11-27, release 0.1.3 (in-window update notice; 0.1.2: backlog items C5, C6, C8, C9, B5, B6 and the close-dialog centering fix, on top of the 2026-11-26 optimization pass).
 
 ## What it is
 HwPulse is a Windows hardware monitor.
@@ -28,7 +28,7 @@ dotnet build -c Debug          # Debug build: asInvoker manifest, no UAC prompt
 bin\Debug\net10.0-windows\HwPulse.exe --no-elevate --render <dir>
 ```
 - **`--render <dir>`:** renders every page to PNG and writes `en-fit.txt`/`es-fit.txt`. Every page except Sensors must say `OK` (no scrolling). Expect **32 files** (30 PNG + `en-fit.txt` + `es-fit.txt`) and the process must **exit on its own**. If a PNG is missing, something measured 0 (see gotcha 5). Works even with the overlay hidden (`OverlayVisible: false` in `%AppData%\HwPulse\settings.json`).
-- **Other dev flags:** `--timing`, `--bench <file>`, `--dump <file>`, `--font "<name>"`, `--minimized`, `--no-elevate`, `--updated` (used internally after a self-update).
+- **Other dev flags:** `--fake-update <ver>`, `--timing`, `--bench <file>`, `--dump <file>`, `--font "<name>"`, `--minimized`, `--no-elevate`, `--updated` (used internally after a self-update).
 - **Release build:**
   ```powershell
   dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:PublishReadyToRun=true -o publish
@@ -80,6 +80,19 @@ A full audit (architecture, leaks, RAM, threads) drove three rounds of changes. 
 
 ---
 
+## DONE 2026-11-27 (0.1.3)
+
+- **In-window update notice.** When a newer release is found, a notice shows at the top of every page, in the same slot and style as the "no admin" notice but with an accent stripe.
+  - Text: "A new version is available: **HwPulse X**".
+  - Buttons: **Update now** (same flow as the Settings link; shows "Downloading…" while busy and "Retry" if it fails), **What's new** (opens the release page) and **×**.
+  - The × stores `AppSettings.UpdateDismissed` = that version, so the notice doesn't return until a newer one exists.
+  - The tray balloon still fires once per version; its text now says "Open HwPulse to install it".
+  - VM: `ShowUpdateBanner`, `UpdateBannerVisibility/Version/Action` in `MainViewModel.Behavior.cs`. App: `DismissUpdateBanner`, `OpenUpdateNotes`.
+- **Dev flag `--fake-update <version>`** simulates an available update so you can see the notice without publishing anything; it never downloads. Combine it with `--render`.
+- **Layout note:** with BOTH the "no admin" notice and the update notice (only possible in non-admin dev runs), Overview, CPU, GPU and Settings scroll by 20–40 px. In normal use the app is elevated, so only one notice shows and every page fits.
+
+---
+
 ## DONE 2026-11-27 (0.1.2)
 
 - **Git:** the opencode pass had created its own local repository without a remote. Its baseline tree was identical to `origin/main` (0.1.1), so its commits were rebased onto `origin/main` and pushed. The local branch is now `main`, tracking `origin/main`. The old local history is kept in branch `backup-local-history` (local only, safe to delete).
@@ -128,7 +141,7 @@ A full audit (architecture, leaks, RAM, threads) drove three rounds of changes. 
 - `--render`: `ApplyScale(2)` is a no-op if the user's `OverlayScale` is exactly 2.0 (one PNG variant less); a future regression that measures 0 now manifests as a missing PNG (silent skip in `Save`).
 
 ## Carried over from previous notes (still pending)
-- Test a real self-update from 0.1.1 to 0.1.2 (open 0.1.1, then Settings → "Update to 0.1.2").
+- Test a real self-update (open 0.1.2: the notice should offer 0.1.3; "Update now" should replace the exe and restart).
 - Test in a real game: FPS stability (sliding-window logic is new-ish), "Start with Windows" in the elevated Release build, a real self-update.
 - Code signing (removes Defender/SmartScreen warnings; the owner must do the submission).
 - Vulkan/OpenGL games report no FPS (only DXGI/D3D9 present events are captured).

@@ -146,6 +146,14 @@ public partial class App : Application
         _ = StartSensorsAsync();
         Updater.CleanupOld();
         if (_renderDir == null) StartUpdateChecks();
+
+        // --fake-update 9.9.9: simula una versión nueva para ver el aviso (desarrollo; no descarga nada).
+        int fakeIdx = Array.IndexOf(args, "--fake-update");
+        if (fakeIdx >= 0 && fakeIdx + 1 < args.Length)
+        {
+            _vm.SetUpdateState("UpdateAvailable", args[fakeIdx + 1]);
+            _vm.ShowUpdateBanner(args[fakeIdx + 1]);
+        }
     }
 
     // ------------------------------------------------------------------ actualizaciones
@@ -177,12 +185,26 @@ public partial class App : Application
 
         string v = _update.Version.ToString(3);
         _vm.SetUpdateState("UpdateAvailable", v);
+        if (_settings.UpdateDismissed != v) _vm.ShowUpdateBanner(v);
         if (!manual && _settings.UpdateNotified != v && _tray != null)
         {
             _settings.UpdateNotified = v;
             SaveSoon();
             _tray.ShowBalloonTip(5000, Loc.T("UpdateNoticeTitle"), Loc.F("UpdateNoticeText", v), WinForms.ToolTipIcon.Info);
         }
+    }
+
+    /// <summary>La × del aviso: no vuelve a salir hasta que haya una versión más nueva que esta.</summary>
+    public void DismissUpdateBanner()
+    {
+        if (_update != null) { _settings.UpdateDismissed = _update.Version.ToString(3); SaveSoon(); }
+        _vm.ShowUpdateBanner(null);
+    }
+
+    public void OpenUpdateNotes()
+    {
+        string url = _update?.PageUrl is { Length: > 0 } u ? u : $"https://github.com/{Updater.Repo}/releases/latest";
+        OpenUrl(url);
     }
 
     /// <summary>Clic en el enlace de actualización: comprobar, o descargar e instalar si ya hay una nueva.</summary>

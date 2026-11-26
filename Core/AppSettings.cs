@@ -61,6 +61,9 @@ public sealed class AppSettings
     /// <summary>Última versión de la que ya se avisó en la bandeja (para no repetir el aviso).</summary>
     public string? UpdateNotified { get; set; }
 
+    /// <summary>Versión cuyo aviso dentro de la ventana se cerró con la ×: no vuelve a salir hasta otra más nueva.</summary>
+    public string? UpdateDismissed { get; set; }
+
     private static string FilePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "HwPulse", "settings.json");
 
