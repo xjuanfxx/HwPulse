@@ -143,7 +143,7 @@
 
     <!-- Diálogo como panel elevado: banda de cabecera oscura (zona de arrastre), separador fino y cuerpo en Surface.
          El fondo es opaco, así que WPF puede usar ClearType. -->
-    <Grid Width="380" RenderOptions.ClearTypeHint="Enabled">
+    <Grid x:Name="Root" Width="380" RenderOptions.ClearTypeHint="Enabled">
         <Grid.RowDefinitions>
             <RowDefinition Height="40"/>
             <RowDefinition Height="Auto"/>
