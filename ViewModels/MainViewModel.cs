@@ -144,7 +144,7 @@ public sealed partial class MainViewModel : Observable
     }
 
     public bool IsAdmin { get; }
-    public string Version { get; } = "HwPulse " + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(2) ?? "");
+    public string Version { get; } = "HwPulse " + (Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "");
 
     // ---------------------------------------------------------------- CPU
     public string CpuName { get; private set; } = "";
