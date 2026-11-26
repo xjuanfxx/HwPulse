@@ -12,9 +12,9 @@ public sealed class MultiChart : FrameworkElement
     private static DependencyProperty Reg<T>(string name, T def) => DependencyProperty.Register(
         name, typeof(T), typeof(MultiChart), new FrameworkPropertyMetadata(def, FrameworkPropertyMetadataOptions.AffectsRender));
 
-    public static readonly DependencyProperty Values1Property = Reg<double[]?>(nameof(Values1), null);
-    public static readonly DependencyProperty Values2Property = Reg<double[]?>(nameof(Values2), null);
-    public static readonly DependencyProperty Values3Property = Reg<double[]?>(nameof(Values3), null);
+    public static readonly DependencyProperty Values1Property = Reg<SeriesView?>(nameof(Values1), null);
+    public static readonly DependencyProperty Values2Property = Reg<SeriesView?>(nameof(Values2), null);
+    public static readonly DependencyProperty Values3Property = Reg<SeriesView?>(nameof(Values3), null);
     public static readonly DependencyProperty Stroke1Property = Reg<Brush>(nameof(Stroke1), Brushes.SteelBlue);
     public static readonly DependencyProperty Stroke2Property = Reg<Brush>(nameof(Stroke2), Brushes.SeaGreen);
     public static readonly DependencyProperty Stroke3Property = Reg<Brush>(nameof(Stroke3), Brushes.MediumPurple);
@@ -25,9 +25,9 @@ public sealed class MultiChart : FrameworkElement
     public static readonly DependencyProperty NowLabelProperty = Reg(nameof(NowLabel), "now");
     public static readonly DependencyProperty ShowAxesProperty = Reg(nameof(ShowAxes), true);
 
-    public double[]? Values1 { get => (double[]?)GetValue(Values1Property); set => SetValue(Values1Property, value); }
-    public double[]? Values2 { get => (double[]?)GetValue(Values2Property); set => SetValue(Values2Property, value); }
-    public double[]? Values3 { get => (double[]?)GetValue(Values3Property); set => SetValue(Values3Property, value); }
+    public SeriesView? Values1 { get => (SeriesView?)GetValue(Values1Property); set => SetValue(Values1Property, value); }
+    public SeriesView? Values2 { get => (SeriesView?)GetValue(Values2Property); set => SetValue(Values2Property, value); }
+    public SeriesView? Values3 { get => (SeriesView?)GetValue(Values3Property); set => SetValue(Values3Property, value); }
     public Brush Stroke1 { get => (Brush)GetValue(Stroke1Property); set => SetValue(Stroke1Property, value); }
     public Brush Stroke2 { get => (Brush)GetValue(Stroke2Property); set => SetValue(Stroke2Property, value); }
     public Brush Stroke3 { get => (Brush)GetValue(Stroke3Property); set => SetValue(Stroke3Property, value); }
@@ -45,6 +45,12 @@ public sealed class MultiChart : FrameworkElement
 
     private static T Frozen<T>(T f) where T : Freezable { f.Freeze(); return f; }
 
+    // Series capturadas a buffers del control, reutilizados entre renders (antes cada pasada asignaba
+    // un array nuevo por serie con Skip().ToArray()).
+    private readonly double[][] _slot = new double[3][];
+    private readonly int[] _slotLen = new int[3];
+    private readonly Brush?[] _slotBrush = new Brush?[3];
+
     protected override void OnRender(DrawingContext dc)
     {
         double w = ActualWidth, h = ActualHeight;
@@ -52,20 +58,26 @@ public sealed class MultiChart : FrameworkElement
         double dip = VisualTreeHelper.GetDpi(this).PixelsPerDip;
         int visible = Math.Max(Visible, 2);
 
-        var series = new[] { (Values1, Stroke1), (Values2, Stroke2), (Values3, Stroke3) }
-            .Where(s => s.Item1 is { Length: > 0 })
-            .Select(s => (vals: s.Item1!.Skip(Math.Max(0, s.Item1!.Length - visible)).ToArray(), brush: s.Item2))
-            .ToList();
+        int n = Capture(Values1, Stroke1, 0);
+        n = Capture(Values2, Stroke2, n);
+        n = Capture(Values3, Stroke3, n);
 
         // Mientras aún no hay historial completo, el eje X abarca solo el tiempo que sí tenemos:
         // así la línea ocupa todo el ancho en vez de quedar aplastada a la derecha.
-        int pts = Math.Clamp(series.Select(s => s.vals.Length).DefaultIfEmpty(0).Max(), 2, visible);
+        int pts = 2;
+        for (int k = 0; k < n; k++) if (_slotLen[k] > pts) pts = _slotLen[k];
+        pts = Math.Min(pts, visible);
 
         double min = Minimum;
         double max = Maximum;
         if (double.IsNaN(max))
         {
-            double peak = series.SelectMany(s => s.vals).DefaultIfEmpty(0).Max();
+            double peak = 0;
+            for (int k = 0; k < n; k++)
+            {
+                var a = _slot[k];
+                for (int j = 0; j < _slotLen[k]; j++) if (a[j] > peak) peak = a[j];
+            }
             max = NiceCeiling(Math.Max(peak * 1.15, min + 1e-3));
         }
         double range = Math.Max(max - min, 1e-9);
@@ -107,17 +119,20 @@ public sealed class MultiChart : FrameworkElement
         }
 
         double step = pw / (pts - 1);
-        foreach (var (vals, brush) in series)
+        for (int k = 0; k < n; k++)
         {
-            if (vals.Length < 2) continue;
-            double x0 = left + pw - (vals.Length - 1) * step;
+            var vals = _slot[k];
+            int count = _slotLen[k];
+            if (count < 2) continue;
+            var brush = _slotBrush[k]!;
+            double x0 = left + pw - (count - 1) * step;
             Point P(int i) => new(x0 + i * step, top + ph - Math.Clamp((vals[i] - min) / range, 0, 1) * ph);
 
             var area = new StreamGeometry();
             using (var ctx = area.Open())
             {
                 ctx.BeginFigure(new Point(x0, top + ph), true, true);
-                for (int i = 0; i < vals.Length; i++) ctx.LineTo(P(i), true, false);
+                for (int i = 0; i < count; i++) ctx.LineTo(P(i), true, false);
                 ctx.LineTo(new Point(left + pw, top + ph), true, false);
             }
             area.Freeze();
@@ -126,7 +141,7 @@ public sealed class MultiChart : FrameworkElement
             using (var ctx = line.Open())
             {
                 ctx.BeginFigure(P(0), false, false);
-                for (int i = 1; i < vals.Length; i++) ctx.LineTo(P(i), true, false);
+                for (int i = 1; i < count; i++) ctx.LineTo(P(i), true, false);
             }
             line.Freeze();
 
@@ -140,7 +155,22 @@ public sealed class MultiChart : FrameworkElement
             dc.DrawGeometry(null, new Pen(brush, 1.4) { LineJoin = PenLineJoin.Round }, line);
         }
 
-        DrawHover(dc, series, left, top, pw, ph, step, min, range, dip);
+        DrawHover(dc, n, left, top, pw, ph, step, min, range, dip);
+    }
+
+    /// <summary>Copia una serie (solo los últimos "visible" puntos) a su buffer reutilizado. Devuelve el
+    /// índice siguiente; los huecos (series vacías) se compactan.</summary>
+    private int Capture(SeriesView? sv, Brush brush, int idx)
+    {
+        if (sv is not { Count: > 0 }) return idx;
+        int visible = Math.Max(Visible, 2);
+        int take = Math.Min(sv.Count, visible);
+        var slot = _slot[idx];
+        if (slot == null || slot.Length < visible) _slot[idx] = slot = new double[visible];
+        Array.Copy(sv.Data, sv.Count - take, slot, 0, take);
+        _slotLen[idx] = take;
+        _slotBrush[idx] = brush;
+        return idx + 1;
     }
 
     // ------------------------------------------------------------------ valor bajo el mouse
@@ -168,20 +198,21 @@ public sealed class MultiChart : FrameworkElement
     private static readonly Typeface TipFace = new(new FontFamily("Segoe UI"), FontStyles.Normal, FontWeights.SemiBold, FontStretches.Normal);
 
     /// <summary>Línea vertical en el punto más cercano al cursor, un punto sobre cada serie y una etiqueta con los valores.</summary>
-    private void DrawHover(DrawingContext dc, List<(double[] vals, Brush brush)> series, double left, double top,
+    private void DrawHover(DrawingContext dc, int n, double left, double top,
                            double pw, double ph, double step, double min, double range, double dip)
     {
-        if (_hover is not Point hp || series.Count == 0 || hp.X < left || hp.X > left + pw) return;
+        if (_hover is not Point hp || n == 0 || hp.X < left || hp.X > left + pw) return;
 
         int ago = (int)Math.Round((left + pw - hp.X) / step); // segundos hacia atrás desde "ahora"
         double x = Math.Round(left + pw - ago * step) + 0.5;
         var rows = new List<(Brush brush, string text)>();
-        foreach (var (vals, brush) in series)
+        for (int k = 0; k < n; k++)
         {
-            int i = vals.Length - 1 - ago;
-            if (i < 0 || i >= vals.Length) continue;
-            double v = vals[i];
+            int i = _slotLen[k] - 1 - ago;
+            if (i < 0 || i >= _slotLen[k]) continue;
+            double v = _slot[k][i];
             double y = top + ph - Math.Clamp((v - min) / range, 0, 1) * ph;
+            var brush = _slotBrush[k]!;
             dc.DrawEllipse(brush, new Pen(Brushes.Black, 1.5), new Point(x, y), 3.5, 3.5);
             rows.Add((brush, string.Format(CultureInfo.InvariantCulture, LabelFormat, v)));
         }

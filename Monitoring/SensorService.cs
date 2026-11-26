@@ -92,6 +92,9 @@ public sealed class SensorService : IDisposable
             IsMemoryEnabled = true,
             IsBatteryEnabled = true,
         };
+        // La caché del mapeo se invalida con los eventos de LHM, no releyendo su árbol cada segundo.
+        _pc.HardwareAdded += _ => _mapDirty = true;   // discos/red al activarlos, hotplug USB…
+        _pc.HardwareRemoved += _ => _mapDirty = true;
         _pc.Open();
     }
 
@@ -113,7 +116,7 @@ public sealed class SensorService : IDisposable
         }
     }
 
-    private static IEnumerable<IHardware> Flatten(IHardware h)
+    private static IEnumerable<IHardware> Flatten(IHardware h) // solo para --bench
     {
         yield return h;
         foreach (var sub in h.SubHardware)
@@ -121,13 +124,40 @@ public sealed class SensorService : IDisposable
                 yield return x;
     }
 
-    private static IEnumerable<ISensor> SensorsOf(IHardware h) => Flatten(h).SelectMany(x => x.Sensors);
-
     private static double? V(ISensor? s) => s?.Value is float f && !float.IsNaN(f) && !float.IsInfinity(f) ? f : null;
     private static double? V(float? f) => f is float x && !float.IsNaN(x) && !float.IsInfinity(x) ? x : null;
 
-    private static ISensor? Find(IEnumerable<ISensor> ss, SensorType t, string name) =>
-        ss.FirstOrDefault(s => s.SensorType == t && s.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+    // ------------------------------------------------------------------ caché del mapeo de hardware y sensores
+    // LibreHardwareMonitor crea una lista nueva cada vez que se lee Computer.Hardware y un array nuevo por
+    // cada acceso a Sensors. Antes además se recorría su árbol dos veces por segundo con SelectMany(Flatten)
+    // anidado, ~15 ToList() por lectura, una regex por sensor del CPU y un Identifier.ToString() por sensor
+    // y por segundo. El mapeo se construye una vez y se invalida SOLO con los eventos de LHM:
+    // HardwareAdded/HardwareRemoved (discos y redes al activarlos, hotplug) y SensorAdded/SensorRemoved de
+    // cada hardware (los discos ganan sensores tras su primera lectura SMART, las GPU tras el primer sondeo).
+
+    private volatile bool _mapDirty = true;
+    private readonly HashSet<IHardware> _watched = new();     // hardware al que ya nos suscribimos (sensores)
+    private IHardware[] _flat = Array.Empty<IHardware>();    // hardware + subhardware aplanado, orden estable
+    private int _topCount;                                    // hardware de primer nivel (red de seguridad)
+    private int _mapVersion;                                  // ++ en cada reconstrucción
+    private readonly Dictionary<IHardware, ISensor[]> _ownSensors = new();       // sensores del hardware mismo
+    private readonly Dictionary<IHardware, ISensor[]> _flattenedSensors = new(); // + subhardware (como SensorsOf)
+    private readonly Dictionary<IHardware, Dictionary<(SensorType, string), ISensor>> _named = new(); // por (tipo, nombre)
+    private readonly Dictionary<ISensor, string> _sensorKeys = new();    // Identifier.ToString() (inmutable)
+    private readonly Dictionary<IHardware, string> _hwKeys = new();      // Identifier.ToString() (inmutable)
+    private IHardware? _cpuHw, _gpuNv, _gpuAmd, _gpuI, _memHw, _virtHw, _batHw;
+    private IHardware[] _disks = Array.Empty<IHardware>();
+    private IHardware[] _netAdapters = Array.Empty<IHardware>(); // sin los filtros "-0000" del mismo adaptador
+
+    // Parse de "CPU Core #N": una vez por sensor, no una regex por segundo.
+    private enum CoreRole : byte { None, Clock, Temp, Load, Tj }
+    private readonly Dictionary<ISensor, (CoreRole role, int core)> _coreRoles = new();
+    private int _coreOrderVersion = -1;
+    private int[] _coreOrder = Array.Empty<int>();
+    // Diccionarios reutilizados en cada lectura (antes se creaban nuevos por tick).
+    private readonly Dictionary<int, double?> _clocks = new();
+    private readonly Dictionary<int, double?> _temps = new();
+    private readonly Dictionary<int, List<double>> _loads = new();
 
     /// <summary>
     /// Lee todos los sensores. Con <paramref name="waitMs"/> finito devuelve null si otra operación
@@ -142,170 +172,307 @@ public sealed class SensorService : IDisposable
 
     private Snapshot ReadLocked()
     {
+        EnsureMap();
+        foreach (var h in _flat)
         {
-            foreach (var h in _pc.Hardware.SelectMany(Flatten))
+            try { h.Update(); } catch { /* un dispositivo que falla no debe tumbar el resto */ }
+        }
+        // Los Update pueden haber añadido sensores o hardware (discos tras su primera lectura): el evento
+        // marcó la caché como sucia; se reconstruye antes de leer los valores de este mismo ciclo.
+        if (_mapDirty) RebuildMap();
+
+        var snap = new Snapshot { IsAdmin = _isAdmin, OnAc = Native.IsOnAc() };
+
+        if (_cpuHw != null) FillCpu(_cpuHw, snap);
+        var gpu = _gpuNv ?? _gpuAmd ?? _gpuI;
+        if (gpu != null) FillGpu(gpu, snap);
+        FillMemory(snap);
+        FillDisks(snap);
+        FillBattery(snap);
+        FillNetwork(snap);
+        FillFans(snap);
+
+        var all = snap.AllSensors;
+        foreach (var h in _flat)
+        {
+            var ss = _ownSensors[h];
+            var hwName = h.Name;
+            for (int i = 0; i < ss.Length; i++)
             {
-                try { h.Update(); } catch { /* un dispositivo que falla no debe tumbar el resto */ }
+                var s = ss[i];
+                all.Add(new SensorReading(_sensorKeys[s], hwName, s.Name, s.SensorType, V(s.Value), V(s.Min), V(s.Max)));
             }
+        }
+        return snap;
+    }
 
-            var snap = new Snapshot { IsAdmin = _isAdmin, OnAc = Native.IsOnAc() };
+    /// <summary>Comprueba que la caché sigue válida (barato). Los eventos la reconstruyen normalmente;
+    /// comparar el número de hardware es la red de seguridad por si algo cambiara sin evento.</summary>
+    private void EnsureMap()
+    {
+        if (_mapDirty || _pc.Hardware.Count != _topCount) RebuildMap();
+    }
 
-            var cpu = _pc.Hardware.FirstOrDefault(h => h.HardwareType == HardwareType.Cpu);
-            if (cpu != null) FillCpu(cpu, snap);
+    private void RebuildMap()
+    {
+        _mapDirty = false;
+        _mapVersion++;
+        var top = _pc.Hardware; // una sola lista nueva por reconstrucción (LHM crea una por acceso)
+        _topCount = top.Count;
 
-            var gpu = _pc.Hardware.FirstOrDefault(h => h.HardwareType == HardwareType.GpuNvidia)
-                   ?? _pc.Hardware.FirstOrDefault(h => h.HardwareType == HardwareType.GpuAmd)
-                   ?? _pc.Hardware.FirstOrDefault(h => h.HardwareType == HardwareType.GpuIntel);
-            if (gpu != null) FillGpu(gpu, snap);
+        var flat = new List<IHardware>(top.Count * 2);
+        var disks = new List<IHardware>();
+        var adapters = new List<IHardware>();
+        _cpuHw = _gpuNv = _gpuAmd = _gpuI = _memHw = _virtHw = _batHw = null;
+        foreach (var h in top)
+        {
+            AddFlat(h);
+            switch (h.HardwareType)
+            {
+                case HardwareType.Cpu: _cpuHw ??= h; break;
+                case HardwareType.GpuNvidia: _gpuNv ??= h; break;
+                case HardwareType.GpuAmd: _gpuAmd ??= h; break;
+                case HardwareType.GpuIntel: _gpuI ??= h; break;
+                case HardwareType.Memory:
+                    if (h.Name.Contains("Virtual", StringComparison.OrdinalIgnoreCase)) _virtHw ??= h;
+                    else _memHw ??= h;
+                    break;
+                case HardwareType.Storage: disks.Add(h); break;
+                case HardwareType.Network:
+                    if (!FilterAdapter.IsMatch(h.Name)) adapters.Add(h); // filtros QoS: repiten el tráfico
+                    break;
+                case HardwareType.Battery: _batHw ??= h; break;
+            }
+        }
+        _flat = flat.ToArray();
+        _disks = disks.ToArray();
+        _netAdapters = adapters.ToArray();
 
-            FillMemory(snap);
-            FillDisks(snap);
-            FillBattery(snap);
-            FillNetwork(snap);
-            FillFans(snap);
+        // Sensores aplanados (el propio + subhardware), de abajo hacia arriba para que los hijos existan ya.
+        for (int i = flat.Count - 1; i >= 0; i--) _flattenedSensors[flat[i]] = BuildFlattened(flat[i]);
 
-            foreach (var h in _pc.Hardware.SelectMany(Flatten))
-                foreach (var s in h.Sensors)
-                    snap.AllSensors.Add(new SensorReading(s.Identifier.ToString(), h.Name, s.Name, s.SensorType, V(s.Value), V(s.Min), V(s.Max)));
-
-            return snap;
+        void AddFlat(IHardware h)
+        {
+            flat.Add(h);
+            Watch(h);
+            RefreshSensors(h);
+            var subs = h.SubHardware;
+            for (int i = 0; i < subs.Length; i++) AddFlat(subs[i]);
         }
     }
 
-    private static void FillCpu(IHardware cpu, Snapshot snap)
+    private ISensor[] BuildFlattened(IHardware h)
     {
-        var ss = SensorsOf(cpu).ToList();
-        snap.CpuName = cpu.Name;
+        var own = _ownSensors[h];
+        var subs = h.SubHardware;
+        if (subs.Length == 0) return own;
+        int n = own.Length;
+        var parts = new List<ISensor[]>(subs.Length);
+        foreach (var sub in subs) { var a = _flattenedSensors[sub]; parts.Add(a); n += a.Length; }
+        var merged = new ISensor[n];
+        int off = own.Length;
+        Array.Copy(own, merged, own.Length);
+        foreach (var a in parts) { Array.Copy(a, 0, merged, off, a.Length); off += a.Length; }
+        return merged;
+    }
 
-        var clocks = new Dictionary<int, double?>();
-        var temps = new Dictionary<int, double?>();
-        var loads = new Dictionary<int, List<double>>();
+    private void Watch(IHardware h)
+    {
+        if (!_watched.Add(h)) return;
+        h.SensorAdded += _ => _mapDirty = true;
+        h.SensorRemoved += _ => _mapDirty = true;
+    }
+
+    private void RefreshSensors(IHardware h)
+    {
+        var own = h.Sensors; // copia estable de un instante (LHM da un array nuevo por acceso)
+        _ownSensors[h] = own;
+        if (!_hwKeys.ContainsKey(h)) _hwKeys[h] = h.Identifier.ToString();
+        var byName = new Dictionary<(SensorType, string), ISensor>(own.Length);
+        foreach (var s in own)
+        {
+            if (!_sensorKeys.ContainsKey(s)) _sensorKeys[s] = s.Identifier.ToString();
+            byName.TryAdd((s.SensorType, s.Name.ToLowerInvariant()), s); // TryAdd = como el FirstOrDefault antiguo
+        }
+        _named[h] = byName;
+    }
+
+    /// <summary>Valor de un sensor por (tipo, nombre en minúsculas), o null si el hardware no lo tiene.</summary>
+    private double? NamedV(IHardware h, SensorType t, string lowerName) =>
+        _named[h].TryGetValue((t, lowerName), out var s) ? V(s) : null;
+
+    /// <summary>Valor del primer sensor del hardware (y su subhardware) del tipo dado.</summary>
+    private double? FirstV(IHardware h, SensorType t)
+    {
+        var ss = _flattenedSensors[h];
+        for (int i = 0; i < ss.Length; i++) if (ss[i].SensorType == t) return V(ss[i]);
+        return null;
+    }
+
+    /// <summary>Clasifica un sensor del CPU una sola vez (antes: una regex por sensor y por segundo).</summary>
+    private static (CoreRole role, int core) ParseCoreRole(ISensor s)
+    {
+        switch (s.SensorType)
+        {
+            case SensorType.Clock when CoreExact.Match(s.Name) is { Success: true } m:
+                return (CoreRole.Clock, int.Parse(m.Groups[1].Value));
+            case SensorType.Temperature when CoreExact.Match(s.Name) is { Success: true } m:
+                return (CoreRole.Temp, int.Parse(m.Groups[1].Value));
+            case SensorType.Load when CoreLoad.Match(s.Name) is { Success: true } m:
+                return (CoreRole.Load, int.Parse(m.Groups[1].Value));
+            case SensorType.Temperature when s.Name.Contains("Distance to TjMax"):
+                return (CoreRole.Tj, 0);
+        }
+        return (CoreRole.None, 0);
+    }
+
+    private void FillCpu(IHardware cpu, Snapshot snap)
+    {
+        snap.CpuName = cpu.Name;
+        var ss = _flattenedSensors[cpu];
+
+        _clocks.Clear();
+        _temps.Clear();
+        foreach (var list in _loads.Values) list.Clear();
+        double? tjMin = null;
 
         foreach (var s in ss)
         {
-            switch (s.SensorType)
+            if (!_coreRoles.TryGetValue(s, out var role))
+                _coreRoles[s] = role = ParseCoreRole(s);
+            switch (role.role)
             {
-                case SensorType.Clock when CoreExact.Match(s.Name) is { Success: true } m:
-                    clocks[int.Parse(m.Groups[1].Value)] = V(s);
-                    break;
-                case SensorType.Temperature when CoreExact.Match(s.Name) is { Success: true } m:
-                    temps[int.Parse(m.Groups[1].Value)] = V(s);
-                    break;
-                case SensorType.Load when CoreLoad.Match(s.Name) is { Success: true } m:
+                case CoreRole.Clock: _clocks[role.core] = V(s); break;
+                case CoreRole.Temp: _temps[role.core] = V(s); break;
+                case CoreRole.Load:
                     if (V(s) is double l)
                     {
-                        var i = int.Parse(m.Groups[1].Value);
-                        if (!loads.TryGetValue(i, out var list)) loads[i] = list = new List<double>();
+                        if (!_loads.TryGetValue(role.core, out var list)) _loads[role.core] = list = new List<double>(2);
                         list.Add(l);
                     }
                     break;
+                case CoreRole.Tj:
+                    if (V(s) is double d && (tjMin is null || d < tjMin)) tjMin = d;
+                    break;
             }
         }
+        snap.TjDistanceMin = tjMin;
 
-        foreach (var i in clocks.Keys.Union(temps.Keys).Union(loads.Keys).OrderBy(i => i))
+        // El conjunto de núcleos solo cambia cuando cambia el hardware: el orden se cachea con el mapa.
+        if (_coreOrderVersion != _mapVersion)
         {
-            clocks.TryGetValue(i, out var c);
-            temps.TryGetValue(i, out var t);
-            double? l = loads.TryGetValue(i, out var list) && list.Count > 0 ? list.Average() : null;
-            snap.Cores.Add(new CoreReading(i, c, t, l));
+            var set = new HashSet<int>();
+            foreach (var s in ss)
+                if (_coreRoles.TryGetValue(s, out var r) && r.role is CoreRole.Clock or CoreRole.Temp or CoreRole.Load)
+                    set.Add(r.core);
+            _coreOrder = set.ToArray();
+            Array.Sort(_coreOrder);
+            _coreOrderVersion = _mapVersion;
         }
 
-        var validClocks = snap.Cores.Select(c => c.ClockMhz).OfType<double>().Where(c => c > 0).ToList();
-        snap.CpuClockAvg = validClocks.Count > 0 ? validClocks.Average() : null;
+        double clockSum = 0;
+        int clockCount = 0;
+        double? coreTempMax = null;
+        foreach (var i in _coreOrder)
+        {
+            _clocks.TryGetValue(i, out var c);
+            _temps.TryGetValue(i, out var t);
+            double? l = null;
+            if (_loads.TryGetValue(i, out var list) && list.Count > 0)
+            {
+                double sum = 0;
+                for (int j = 0; j < list.Count; j++) sum += list[j];
+                l = sum / list.Count;
+            }
+            if (c is double cm && cm > 0) { clockSum += cm; clockCount++; }
+            if (t is double tm && (coreTempMax is null || tm > coreTempMax)) coreTempMax = tm;
+            snap.Cores.Add(new CoreReading(i, c, t, l));
+        }
+        snap.CpuClockAvg = clockCount > 0 ? clockSum / clockCount : null;
 
-        var coreTemps = snap.Cores.Select(c => c.TempC).OfType<double>().ToList();
-        snap.CpuTempMax = V(Find(ss, SensorType.Temperature, "Core Max"))
-                          ?? (coreTemps.Count > 0 ? (double?)coreTemps.Max() : null);
-        snap.CpuTempPkg = V(Find(ss, SensorType.Temperature, "CPU Package"));
-        snap.CpuLoad = V(Find(ss, SensorType.Load, "CPU Total"));
-        snap.CpuCoreLoadMax = V(Find(ss, SensorType.Load, "CPU Core Max"));
-        snap.CpuPower = V(Find(ss, SensorType.Power, "CPU Package"));
-        snap.CpuVoltage = V(Find(ss, SensorType.Voltage, "CPU Core"));
-
-        var dist = ss.Where(s => s.SensorType == SensorType.Temperature && s.Name.Contains("Distance to TjMax"))
-                     .Select(V).OfType<double>().ToList();
-        snap.TjDistanceMin = dist.Count > 0 ? dist.Min() : null;
+        snap.CpuTempMax = NamedV(cpu, SensorType.Temperature, "core max") ?? coreTempMax;
+        snap.CpuTempPkg = NamedV(cpu, SensorType.Temperature, "cpu package");
+        snap.CpuLoad = NamedV(cpu, SensorType.Load, "cpu total");
+        snap.CpuCoreLoadMax = NamedV(cpu, SensorType.Load, "cpu core max");
+        snap.CpuPower = NamedV(cpu, SensorType.Power, "cpu package");
+        snap.CpuVoltage = NamedV(cpu, SensorType.Voltage, "cpu core");
     }
 
-    private static void FillGpu(IHardware gpu, Snapshot snap)
+    private void FillGpu(IHardware gpu, Snapshot snap)
     {
-        var ss = SensorsOf(gpu).ToList();
         snap.GpuName = gpu.Name;
-        snap.GpuLoad = V(Find(ss, SensorType.Load, "GPU Core"));
-        snap.GpuTemp = V(Find(ss, SensorType.Temperature, "GPU Core"));
-        snap.GpuHotSpot = V(Find(ss, SensorType.Temperature, "GPU Hot Spot"));
-        snap.GpuCoreClock = V(Find(ss, SensorType.Clock, "GPU Core"));
-        snap.GpuMemClock = V(Find(ss, SensorType.Clock, "GPU Memory"));
-        snap.GpuPower = V(Find(ss, SensorType.Power, "GPU Package")) ?? V(ss.FirstOrDefault(s => s.SensorType == SensorType.Power));
-        snap.VramUsedMb = V(Find(ss, SensorType.SmallData, "GPU Memory Used"));
-        snap.VramTotalMb = V(Find(ss, SensorType.SmallData, "GPU Memory Total"));
-        snap.GpuFanRpm = V(ss.FirstOrDefault(s => s.SensorType == SensorType.Fan));
-        snap.GpuFanPct = V(ss.FirstOrDefault(s => s.SensorType == SensorType.Control));
+        snap.GpuLoad = NamedV(gpu, SensorType.Load, "gpu core");
+        snap.GpuTemp = NamedV(gpu, SensorType.Temperature, "gpu core");
+        snap.GpuHotSpot = NamedV(gpu, SensorType.Temperature, "gpu hot spot");
+        snap.GpuCoreClock = NamedV(gpu, SensorType.Clock, "gpu core");
+        snap.GpuMemClock = NamedV(gpu, SensorType.Clock, "gpu memory");
+        snap.GpuPower = NamedV(gpu, SensorType.Power, "gpu package") ?? FirstV(gpu, SensorType.Power);
+        snap.VramUsedMb = NamedV(gpu, SensorType.SmallData, "gpu memory used");
+        snap.VramTotalMb = NamedV(gpu, SensorType.SmallData, "gpu memory total");
+        snap.GpuFanRpm = FirstV(gpu, SensorType.Fan);
+        snap.GpuFanPct = FirstV(gpu, SensorType.Control);
     }
 
     private void FillMemory(Snapshot snap)
     {
-        var mem = _pc.Hardware.Where(h => h.HardwareType == HardwareType.Memory && !h.Name.Contains("Virtual", StringComparison.OrdinalIgnoreCase))
-                              .SelectMany(SensorsOf)
-                              .Where(s => !s.Name.Contains("Virtual", StringComparison.OrdinalIgnoreCase))
-                              .ToList();
-        snap.RamLoad = V(Find(mem, SensorType.Load, "Memory"));
-        snap.RamUsedGb = V(Find(mem, SensorType.Data, "Memory Used"));
-        snap.RamAvailGb = V(Find(mem, SensorType.Data, "Memory Available"));
-
-        var virt = _pc.Hardware.Where(h => h.HardwareType == HardwareType.Memory).SelectMany(SensorsOf).ToList();
-        var vh = _pc.Hardware.FirstOrDefault(h => h.HardwareType == HardwareType.Memory && h.Name.Contains("Virtual", StringComparison.OrdinalIgnoreCase));
-        if (vh != null)
+        if (_memHw != null)
         {
-            var vs = SensorsOf(vh).ToList();
-            snap.VirtUsedGb = V(Find(vs, SensorType.Data, "Memory Used"));
-            snap.VirtAvailGb = V(Find(vs, SensorType.Data, "Memory Available"));
+            snap.RamLoad = NamedV(_memHw, SensorType.Load, "memory");
+            snap.RamUsedGb = NamedV(_memHw, SensorType.Data, "memory used");
+            snap.RamAvailGb = NamedV(_memHw, SensorType.Data, "memory available");
         }
-        else
+        if (_virtHw != null)
         {
-            snap.VirtUsedGb = V(Find(virt, SensorType.Data, "Virtual Memory Used"));
-            snap.VirtAvailGb = V(Find(virt, SensorType.Data, "Virtual Memory Available"));
+            snap.VirtUsedGb = NamedV(_virtHw, SensorType.Data, "memory used");
+            snap.VirtAvailGb = NamedV(_virtHw, SensorType.Data, "memory available");
+        }
+        else if (_memHw != null)
+        {
+            snap.VirtUsedGb = NamedV(_memHw, SensorType.Data, "virtual memory used");
+            snap.VirtAvailGb = NamedV(_memHw, SensorType.Data, "virtual memory available");
         }
     }
 
     private void FillNetwork(Snapshot snap)
     {
-        foreach (var n in _pc.Hardware.Where(h => h.HardwareType == HardwareType.Network))
+        foreach (var n in _netAdapters)
         {
-            // "Wi-Fi-QoS Packet Scheduler-0000" y similares son filtros del mismo adaptador:
-            // repiten su tráfico y duplicarían el total.
-            if (FilterAdapter.IsMatch(n.Name)) continue;
-            var ss = SensorsOf(n).ToList();
-            var down = V(Find(ss, SensorType.Throughput, "Download Speed"));
-            var up = V(Find(ss, SensorType.Throughput, "Upload Speed"));
-            var dTot = V(Find(ss, SensorType.Data, "Data Downloaded"));
-            var uTot = V(Find(ss, SensorType.Data, "Data Uploaded"));
+            var down = NamedV(n, SensorType.Throughput, "download speed");
+            var up = NamedV(n, SensorType.Throughput, "upload speed");
+            var dTot = NamedV(n, SensorType.Data, "data downloaded");
+            var uTot = NamedV(n, SensorType.Data, "data uploaded");
             // Adaptadores virtuales sin tráfico acumulado no aportan nada.
             if ((dTot ?? 0) + (uTot ?? 0) < 0.001 && (down ?? 0) + (up ?? 0) < 1) continue;
-            snap.Networks.Add(new NetReading(n.Identifier.ToString(), n.Name, down, up, dTot, uTot));
+            snap.Networks.Add(new NetReading(_hwKeys[n], n.Name, down, up, dTot, uTot));
         }
     }
 
     private void FillFans(Snapshot snap)
     {
-        foreach (var h in _pc.Hardware.SelectMany(Flatten))
-            foreach (var s in h.Sensors.Where(s => s.SensorType == SensorType.Fan))
-                snap.Fans.Add(new FanReading(s.Identifier.ToString(), $"{s.Name}", V(s)));
+        foreach (var h in _flat)
+        {
+            var ss = _ownSensors[h];
+            for (int i = 0; i < ss.Length; i++)
+            {
+                var s = ss[i];
+                if (s.SensorType == SensorType.Fan)
+                    snap.Fans.Add(new FanReading(_sensorKeys[s], s.Name, V(s)));
+            }
+        }
     }
 
     private void FillDisks(Snapshot snap)
     {
-        foreach (var d in _pc.Hardware.Where(h => h.HardwareType == HardwareType.Storage))
+        foreach (var d in _disks)
         {
-            var ss = SensorsOf(d).ToList();
             snap.Disks.Add(new DiskReading(
-                d.Identifier.ToString(),
+                _hwKeys[d],
                 d.Name,
-                V(ss.FirstOrDefault(s => s.SensorType == SensorType.Temperature)),
-                V(Find(ss, SensorType.Load, "Total Activity")),
-                V(Find(ss, SensorType.Throughput, "Read Rate")),
-                V(Find(ss, SensorType.Throughput, "Write Rate")),
-                V(Find(ss, SensorType.Load, "Used Space")),
+                FirstV(d, SensorType.Temperature),
+                NamedV(d, SensorType.Load, "total activity"),
+                NamedV(d, SensorType.Throughput, "read rate"),
+                NamedV(d, SensorType.Throughput, "write rate"),
+                NamedV(d, SensorType.Load, "used space"),
                 ShortDiskName(d)));
         }
     }
@@ -318,7 +485,7 @@ public sealed class SensorService : IDisposable
     /// </summary>
     private string ShortDiskName(IHardware d)
     {
-        var key = d.Identifier.ToString();
+        var key = _hwKeys[d];
         if (_diskNames.TryGetValue(key, out var cached)) return cached;
 
         // Letras y tipo desde Windows (MSFT_Partition / MSFT_PhysicalDisk); NVMe lo dice el propio sensor.
@@ -336,12 +503,10 @@ public sealed class SensorService : IDisposable
 
     private void FillBattery(Snapshot snap)
     {
-        var bat = _pc.Hardware.FirstOrDefault(h => h.HardwareType == HardwareType.Battery);
-        if (bat == null) return;
-        var ss = SensorsOf(bat).ToList();
-        snap.BatteryCharge = V(Find(ss, SensorType.Level, "Charge Level"));
-        var charge = V(Find(ss, SensorType.Power, "Charge Rate"));
-        var discharge = V(Find(ss, SensorType.Power, "Discharge Rate"));
+        if (_batHw == null) return;
+        snap.BatteryCharge = NamedV(_batHw, SensorType.Level, "charge level");
+        var charge = NamedV(_batHw, SensorType.Power, "charge rate");
+        var discharge = NamedV(_batHw, SensorType.Power, "discharge rate");
         snap.BatteryRateW = charge is > 0 ? charge : discharge is > 0 ? -discharge : charge ?? discharge;
     }
 

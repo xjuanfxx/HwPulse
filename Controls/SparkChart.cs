@@ -7,7 +7,7 @@ namespace HwPulse;
 public sealed class SparkChart : FrameworkElement
 {
     public static readonly DependencyProperty ValuesProperty = DependencyProperty.Register(
-        nameof(Values), typeof(double[]), typeof(SparkChart), new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
+        nameof(Values), typeof(SeriesView), typeof(SparkChart), new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender));
 
     public static readonly DependencyProperty MinimumProperty = DependencyProperty.Register(
         nameof(Minimum), typeof(double), typeof(SparkChart), new FrameworkPropertyMetadata(0.0, FrameworkPropertyMetadataOptions.AffectsRender));
@@ -27,19 +27,27 @@ public sealed class SparkChart : FrameworkElement
 
     public bool ShowFrame { get => (bool)GetValue(ShowFrameProperty); set => SetValue(ShowFrameProperty, value); }
 
-    public double[]? Values { get => (double[]?)GetValue(ValuesProperty); set => SetValue(ValuesProperty, value); }
+    public SeriesView? Values { get => (SeriesView?)GetValue(ValuesProperty); set => SetValue(ValuesProperty, value); }
     public double Minimum { get => (double)GetValue(MinimumProperty); set => SetValue(MinimumProperty, value); }
     public double Maximum { get => (double)GetValue(MaximumProperty); set => SetValue(MaximumProperty, value); }
     public Brush Stroke { get => (Brush)GetValue(StrokeProperty); set => SetValue(StrokeProperty, value); }
     public int Capacity { get => (int)GetValue(CapacityProperty); set => SetValue(CapacityProperty, value); }
 
     private static readonly Pen GridPen = CreateGridPen();
+    private double[]? _slice; // últimos Capacity puntos cuando el historial es más largo: buffer reutilizado
 
     private static Pen CreateGridPen()
     {
         var p = new Pen(new SolidColorBrush(Color.FromArgb(0x14, 0xFF, 0xFF, 0xFF)), 1);
         p.Freeze();
         return p;
+    }
+
+    private static double MaxOf(double[] a, int n)
+    {
+        double m = a[0];
+        for (int i = 1; i < n; i++) if (a[i] > m) m = a[i];
+        return m;
     }
 
     protected override void OnRender(DrawingContext dc)
@@ -52,20 +60,30 @@ public sealed class SparkChart : FrameworkElement
             foreach (var f in new[] { 0.25, 0.5, 0.75 })
                 dc.DrawLine(GridPen, new Point(0, Math.Round(h * f) + 0.5), new Point(w, Math.Round(h * f) + 0.5));
 
-        var v = Values;
-        if (v is { Length: > 0 } && v.Length > Capacity) v = v[^Capacity..];
-        if (v is null || v.Length < 2)
+        // El historial llega en un buffer reutilizado (SeriesView): solo los primeros Count son válidos.
+        var sv = Values;
+        double[] v = sv?.Data ?? Array.Empty<double>();
+        int len = sv?.Count ?? 0;
+        if (len > Capacity) // solo caben los últimos Capacity puntos: al buffer propio, sin asignar uno nuevo
+        {
+            _slice ??= new double[Capacity];
+            if (_slice.Length < Capacity) _slice = new double[Capacity];
+            Array.Copy(v, len - Capacity, _slice, 0, Capacity);
+            v = _slice;
+            len = Capacity;
+        }
+        if (len < 2)
         {
             if (ShowFrame) dc.DrawRectangle(null, GridPen, new Rect(0.5, 0.5, w - 1, h - 1));
             return;
         }
 
         double min = Minimum;
-        double max = double.IsNaN(Maximum) ? Math.Max(v.Max() * 1.1, min + 1) : Maximum;
+        double max = double.IsNaN(Maximum) ? Math.Max(MaxOf(v, len) * 1.1, min + 1) : Maximum;
         double range = Math.Max(max - min, 1e-6);
         // Con poco historial, la línea se estira a todo el ancho en vez de quedarse pegada a la derecha.
-        double step = w / Math.Max(Math.Min(Capacity, v.Length) - 1, 1);
-        double x0 = w - (v.Length - 1) * step;
+        double step = w / Math.Max(Math.Min(Capacity, len) - 1, 1);
+        double x0 = w - (len - 1) * step;
 
         Point P(int i) => new(x0 + i * step, h - Math.Clamp((v[i] - min) / range, 0, 1) * (h - 2) - 1);
 
@@ -73,7 +91,7 @@ public sealed class SparkChart : FrameworkElement
         using (var ctx = line.Open())
         {
             ctx.BeginFigure(P(0), false, false);
-            for (int i = 1; i < v.Length; i++) ctx.LineTo(P(i), true, false);
+            for (int i = 1; i < len; i++) ctx.LineTo(P(i), true, false);
         }
         line.Freeze();
 
@@ -81,7 +99,7 @@ public sealed class SparkChart : FrameworkElement
         using (var ctx = area.Open())
         {
             ctx.BeginFigure(new Point(x0, h), true, true);
-            for (int i = 0; i < v.Length; i++) ctx.LineTo(P(i), true, false);
+            for (int i = 0; i < len; i++) ctx.LineTo(P(i), true, false);
             ctx.LineTo(new Point(w, h), true, false);
         }
         area.Freeze();
@@ -102,8 +120,8 @@ public sealed class SparkChart : FrameworkElement
         if (_hover is Point hp && hp.X >= 0 && hp.X <= w)
         {
             int ago = (int)Math.Round((w - hp.X) / step);
-            int i = v.Length - 1 - ago;
-            if (i >= 0 && i < v.Length)
+            int i = len - 1 - ago;
+            if (i >= 0 && i < len)
             {
                 var p = P(i);
                 double dip = VisualTreeHelper.GetDpi(this).PixelsPerDip;

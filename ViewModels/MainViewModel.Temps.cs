@@ -151,10 +151,4 @@ public sealed partial class MainViewModel
         TempSelectionChanged?.Invoke();
         Rerender();
     }
-
-    /// <summary>Filas del panel "Temperaturas" con los sensores marcados, en el orden de la lista.</summary>
-    private List<BarRow> SelectedTempRows() =>
-        TempChoices.Where(c => c.IsChecked && c.Value is not null)
-                   .Select(c => new BarRow(c.ShortLabel, Fmt.Temp(c.Value), Math.Clamp(c.Value!.Value / 105 * 100, 0, 100), c.Bar))
-                   .ToList();
 }

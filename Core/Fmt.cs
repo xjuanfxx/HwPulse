@@ -115,4 +115,44 @@ public sealed class RingBuffer
         for (int i = 0; i < _count; i++) r[i] = _data[(_start + i) % _data.Length];
         return r;
     }
+
+    /// <summary>Copia el historial en orden cronológico a un buffer reutilizado (sin asignar un array
+    /// nuevo cada segundo). Devuelve cuántos puntos del inicio del buffer son válidos.</summary>
+    public int CopyTo(double[] buffer)
+    {
+        int n = Math.Min(_count, buffer.Length);
+        for (int i = 0; i < n; i++) buffer[i] = _data[(_start + i) % _data.Length];
+        return n;
+    }
+}
+
+/// <summary>Los puntos de una gráfica: un buffer reutilizado y cuántos son válidos. WPF no nota los
+/// cambios de contenido de un array (compara referencias), así que la vista que se expone alterna entre
+/// dos buffers: cambia la referencia, se refresca el binding y no se asigna memoria nueva por segundo.</summary>
+public sealed class SeriesView
+{
+    public required double[] Data { get; init; }
+    public int Count { get; set; }
+}
+
+/// <summary>Una serie de gráfica sin asignaciones por segundo: RingBuffer.CopyTo sobre dos buffers
+/// alternos propiedad de la vista (se crean una sola vez, con la capacidad del historial).</summary>
+public sealed class ChartSeries
+{
+    private readonly SeriesView _a, _b;
+    private bool _useB;
+
+    public ChartSeries(int capacity)
+    {
+        _a = new SeriesView { Data = new double[capacity] };
+        _b = new SeriesView { Data = new double[capacity] };
+    }
+
+    public SeriesView? Snapshot(RingBuffer hist)
+    {
+        _useB = !_useB;
+        var v = _useB ? _b : _a;
+        v.Count = hist.CopyTo(v.Data);
+        return v;
+    }
 }

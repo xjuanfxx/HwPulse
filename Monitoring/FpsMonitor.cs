@@ -28,16 +28,37 @@ public sealed class FpsMonitor : IDisposable
     private static readonly HashSet<int> NetRecv = new() { 11, 27, 43, 59 };
     private readonly Dictionary<int, (long down, long up)> _net = new();
     private DateTime _netSince = DateTime.UtcNow;
+    private readonly object _netProviderLock = new();
+    private bool _netProviderOn;
 
     private FpsMonitor()
     {
         _session = new TraceEventSession("HwPulse-FPS") { StopOnDispose = true };
         _session.EnableProvider(Dxgi, TraceEventLevel.Verbose);
         _session.EnableProvider(D3D9, TraceEventLevel.Verbose);
-        _session.EnableProvider(KernelNetwork, TraceEventLevel.Informational);
+        // Kernel-Network no se activa aquí: capturaría cada envío y recepción TCP/UDP de todo el sistema,
+        // mientras la app esté abierta. Se enciende bajo demanda con SetNetworkEnabled (página de Red).
         _session.Source.AllEvents += OnEvent;
         _session.Source.Dynamic.All += OnNetwork; // el parser dinámico da acceso a los campos PID y size
         new Thread(() => { try { _session.Source.Process(); } catch { } }) { IsBackground = true, Name = "HwPulse ETW" }.Start();
+    }
+
+    /// <summary>Activa o desactiva la captura de red por proceso (Kernel-Network) según la página de Red
+    /// esté visible. Con el proveedor apagado, Windows deja de publicar esos eventos y OnNetwork no corre
+    /// por cada paquete del sistema entero; la llamada es un simple "ya está así" si el estado no cambia.</summary>
+    public void SetNetworkEnabled(bool on)
+    {
+        lock (_netProviderLock)
+        {
+            if (on == _netProviderOn) return;
+            _netProviderOn = on;
+            try
+            {
+                if (on) _session.EnableProvider(KernelNetwork, TraceEventLevel.Informational);
+                else _session.DisableProvider(KernelNetwork);
+            }
+            catch { /* ETW no disponible: la red por proceso queda a cero */ }
+        }
     }
 
     private void OnNetwork(TraceEvent e)
@@ -76,9 +97,25 @@ public sealed class FpsMonitor : IDisposable
         return snap.ToDictionary(kv => kv.Key, kv => (kv.Value.down / secs, kv.Value.up / secs));
     }
 
+    /// <summary>Descarta el tráfico acumulado por proceso. Con la ventana oculta en la bandeja nadie lo
+    /// consume (SampleNetwork no se llama), y el diccionario crecería sin límite: una entrada por cada PID
+    /// que haya tenido tráfico desde el arranque.</summary>
+    public void ResetNetwork()
+    {
+        lock (_lock) { _net.Clear(); _netSince = DateTime.UtcNow; }
+    }
+
     public static FpsMonitor? TryStart()
     {
-        try { return new FpsMonitor(); }
+        try
+        {
+            // Un cierre abrupto (kill, corte de luz, crash) deja la sesión de ETW huérfana: es un objeto de
+            // kernel que sobrevive al proceso, y el siguiente arranque fallaría al crear otra con el mismo
+            // nombre (y los FPS quedarían muertos hasta reiniciar Windows). Si existe, se detiene antes.
+            using var orphan = TraceEventSession.GetActiveSession("HwPulse-FPS");
+            orphan?.Stop();
+            return new FpsMonitor();
+        }
         catch { return null; } // sin admin o ETW no disponible: el overlay muestra "—"
     }
 

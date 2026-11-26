@@ -48,6 +48,8 @@ public sealed partial class MainViewModel
 
     // Grupos
     private bool FpsG => On("fps") || On("frametime");
+    /// <summary>El overlay tiene marcado FPS o frametime: puede hacer falta la sesión ETW de FPS.</summary>
+    public bool OverlayHasFps => FpsG;
     private bool CpuG => On("cpuLoad") || On("cpuTemp") || On("cpuClock");
     private bool GpuG => On("gpuLoad") || On("gpuTemp");
     private bool VramG => On("vram");

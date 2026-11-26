@@ -28,14 +28,36 @@ public partial class App : Application
     private Task<SensorService>? _sensorsTask;
     private int _procTick;
 
+    /// <summary>Recursos que se están creando en segundo plano (sensores, sesión ETW de FPS) antes de
+    /// asignarse a su campo. Si la app se cierra antes de que la tarea termine, ExitApp/ProcessExit los
+    /// liberan igualmente: sin esto quedaría un Computer de LibreHardwareMonitor abierto (con los módulos
+    /// de PawnIO cargados) o una sesión ETW activa tras la salida.</summary>
+    private readonly List<IDisposable> _pendingResources = new();
+
     public bool IsExiting { get; private set; }
 
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
         ErrorLog.Install(this);
-        // Si Windows cierra la app (apagado, fin de sesión, kill), liberar la sesión ETW de FPS.
-        AppDomain.CurrentDomain.ProcessExit += (_, _) => { try { _fps?.Dispose(); } catch { } };
+        // Si Windows cierra la app (apagado, fin de sesión, kill), liberar todo lo que quede vivo: la sesión
+        // ETW de FPS, el Computer de LibreHardwareMonitor (descarga los módulos de PawnIO), el panel web y
+        // cualquier recurso que siga abriéndose en segundo plano.
+        AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+        {
+            try { _fps?.Dispose(); } catch { }
+            try { _sensors?.Dispose(); } catch { }
+            try { _web?.Dispose(); } catch { }
+            try
+            {
+                lock (_pendingResources)
+                {
+                    foreach (var d in _pendingResources) { try { d.Dispose(); } catch { } }
+                    _pendingResources.Clear();
+                }
+            }
+            catch { }
+        };
         var args = e.Args;
         bool admin = Native.IsAdmin();
 
@@ -88,8 +110,15 @@ public partial class App : Application
             return;
         }
 
-        // Los sensores empiezan a abrirse YA, en paralelo con la creación de las ventanas.
-        _sensorsTask = Task.Run(() => new SensorService(admin));
+        // Los sensores empiezan a abrirse YA, en paralelo con la creación de las ventanas. El recurso se
+        // registra al crearse: si la app se cierra antes de que StartSensorsAsync lo asigne a _sensors,
+        // ExitApp/ProcessExit lo liberan igualmente (Computer.Close descarga los módulos de PawnIO).
+        _sensorsTask = Task.Run(() =>
+        {
+            var s = new SensorService(admin);
+            lock (_pendingResources) _pendingResources.Add(s);
+            return s;
+        });
 
         _vm = new MainViewModel(_settings, admin);
         _vm.OverlayVisibilityChanged = OnOverlayVisibilityChanged;
@@ -114,7 +143,7 @@ public partial class App : Application
         int renderIdx = Array.IndexOf(args, "--render");
         if (renderIdx >= 0 && renderIdx + 1 < args.Length) _renderDir = args[renderIdx + 1];
         _timingFile = args.Contains("--timing") ? Path.Combine(Path.GetTempPath(), "hwpulse-startup.txt") : null;
-        _ = StartSensorsAsync(admin);
+        _ = StartSensorsAsync();
         Updater.CleanupOld();
         if (_renderDir == null) StartUpdateChecks();
     }
@@ -303,12 +332,13 @@ public partial class App : Application
         }
     }
 
-    private async Task StartSensorsAsync(bool admin)
+    private async Task StartSensorsAsync()
     {
         try
         {
             // Abrir LibreHardwareMonitor (driver, discos, red) tarda varios segundos: fuera del hilo de la interfaz.
             _sensors = await _sensorsTask!;
+            lock (_pendingResources) _pendingResources.Remove(_sensors); // ya vive en su campo: lo libera ExitApp
             Mark("sensors opened");
         }
         catch (Exception ex)
@@ -318,9 +348,36 @@ public partial class App : Application
             return;
         }
 
-        // El monitor de FPS arranca en paralelo: no hace falta esperarlo para mostrar los primeros datos.
-        if (admin) _ = Task.Run(() => _fps = FpsMonitor.TryStart());
+        // La sesión ETW de FPS ya no se crea aquí: la crea EnsureFpsMonitor (llamado desde el bucle de
+        // polling) solo cuando alguien la necesita. Sin eso, TraceEvent y la captura de eventos corrían
+        // siempre, con admin, aunque el usuario no usara FPS ni la página de Red.
+        // ExitApp pudo correr mientras los sensores se abrían (todo ya quedó liberado): no arrancar el bucle.
+        if (IsExiting) return;
         await PollLoop(_cts.Token);
+    }
+
+    // ------------------------------------------------------------------ sesión ETW de FPS (bajo demanda)
+    private bool _fpsTried; // un solo intento, como antes: si ETW falla, el overlay muestra "—"
+
+    /// <summary>Crea la sesión ETW de FPS solo si alguien la usa ahora: el overlay visible con FPS o
+    /// frametime marcados, o la página de Red abierta (la red por proceso se lee de los eventos
+    /// Kernel-Network de esa misma sesión). El resto del tiempo no hay sesión: ni RAM de TraceEvent
+    /// ni eventos de present de todo el sistema.</summary>
+    private void EnsureFpsMonitor()
+    {
+        if (_fps != null || _fpsTried || !_vm.IsAdmin) return;
+        bool overlayFps = _vm.OverlayVisible && _vm.OverlayHasFps;
+        bool netPage = _vm.UiVisible && _vm.CurrentPage == "Network";
+        if (!overlayFps && !netPage) return;
+        _fpsTried = true;
+        _ = Task.Run(() =>
+        {
+            var f = FpsMonitor.TryStart();
+            if (f == null) return;
+            lock (_pendingResources) _pendingResources.Add(f);
+            _fps = f;
+            lock (_pendingResources) _pendingResources.Remove(f);
+        });
     }
 
     // ------------------------------------------------------------------ capturas (desarrollo)
@@ -437,6 +494,10 @@ public partial class App : Application
             {
                 try
                 {
+                    // ETW de FPS: la sesión se crea solo si el overlay la usa o la página de Red está abierta;
+                    // la captura de red por proceso (Kernel-Network) se enciende y apaga según esa página.
+                    EnsureFpsMonitor();
+                    _fps?.SetNetworkEnabled(_vm.UiVisible && _vm.CurrentPage == "Network");
                     // Procesos cada 2 s (es la consulta más cara); la primera, ya en el primer ciclo.
                     // Procesos desde el segundo ciclo: el primero solo trae sensores, para pintar cuanto antes.
                     bool sampleProcs = _vm.UiVisible && _procTick++ % 2 == 1; // en la bandeja no se listan procesos
@@ -459,13 +520,17 @@ public partial class App : Application
                             }
                             catch (Exception ex) { ErrorLog.Write("Processes", ex); }
                         }
+                        // En la bandeja no se muestra la red por proceso: se descarta lo acumulado para que
+                        // el diccionario no crezca sin límite (una entrada por PID que haya tenido tráfico).
+                        else if (!_vm.UiVisible) _fps?.ResetNetwork();
                         if (_fps != null) (s.Fps, s.FrametimeMs, s.FpsProcess) = _fps.Sample(fgPid);
                         return s;
                     }, ct);
                     if (snap == null) continue;
                     _vm.Apply(snap);   // continuamos en el hilo de la interfaz
                     if (_tray != null) _tray.Text = _vm.TrayText;
-                    _web?.SetJson(BuildWebJson(snap));
+                    // El JSON del panel web solo si hay alguien conectado (SSE o polling reciente).
+                    if (_web != null && _web.NeedsJson) _web.SetJson(BuildWebJson(snap));
                     // Con los primeros datos ya en pantalla, abrimos discos y red en segundo plano.
                     if (!_sensors!.ExtrasEnabled && !_extrasStarted)
                     {
@@ -631,6 +696,13 @@ public partial class App : Application
         _web?.Dispose();
         _fps?.Dispose();
         _sensors?.Dispose();
+        // Sensores o sesión ETW que aún se estén abriendo en segundo plano (la carrera de arranque que
+        // cubre _pendingResources): sin esto quedaría un Computer abierto con módulos de PawnIO cargados.
+        lock (_pendingResources)
+        {
+            foreach (var d in _pendingResources) { try { d.Dispose(); } catch { } }
+            _pendingResources.Clear();
+        }
         _mutex?.ReleaseMutex();
         Shutdown();
     }

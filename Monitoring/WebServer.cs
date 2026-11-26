@@ -15,7 +15,9 @@ public sealed class WebServer : IDisposable
 {
     private readonly HttpListener _listener = new();
     private readonly Dictionary<string, (byte[] data, string type)> _files;
-    private byte[] _json = "{}"u8.ToArray();
+    private static readonly byte[] EmptyJson = "{}"u8.ToArray();
+    private byte[] _json = EmptyJson;
+    private DateTime _lastPollUtc = DateTime.MinValue; // último /api/stats (navegador sin EventSource)
 
     public int Port { get; }
     public bool LanActive { get; private set; }
@@ -92,6 +94,18 @@ public sealed class WebServer : IDisposable
         });
     }
 
+    /// <summary>Hay que serializar la lectura nueva: hay algún cliente SSE conectado, alguien ha pedido
+    /// /api/stats hace poco, o todavía no se ha enviado ninguna lectura. Evita construir el JSON cada
+    /// segundo cuando no hay nadie mirando el panel (viene activado por defecto).</summary>
+    public bool NeedsJson
+    {
+        get
+        {
+            lock (_streams)
+                return _streams.Count > 0 || ReferenceEquals(_json, EmptyJson) || (DateTime.UtcNow - _lastPollUtc).TotalSeconds < 10;
+        }
+    }
+
     private const int MaxStreams = 16; // límite de pantallas conectadas a la vez (evita agotar recursos)
 
     private void OpenStream(HttpListenerResponse res)
@@ -139,6 +153,7 @@ public sealed class WebServer : IDisposable
             byte[] body;
             if (path == "/api/stats")
             {
+                lock (_streams) _lastPollUtc = DateTime.UtcNow; // mantiene viva la serialización del bucle
                 body = _json;
                 res.ContentType = "application/json; charset=utf-8";
                 res.Headers["Cache-Control"] = "no-store";

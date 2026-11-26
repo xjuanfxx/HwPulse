@@ -1,15 +1,87 @@
+using System.Collections.ObjectModel;
 using System.IO;
 using System.Windows;
 using System.Windows.Media;
 
 namespace HwPulse;
 
-public sealed record BarRow(string Label, string ValueText, double Pct, Brush Brush);
+/// <summary>Fila con barra (temperaturas, ventiladores). Se actualiza en sitio con <see cref="Update"/>:
+/// antes se recreaba la lista entera cada segundo y WPF reconstruía los controles de cada ItemsControl.</summary>
+public sealed class BarRow : Observable
+{
+    public BarRow(string label, string valueText, double pct, Brush brush) => Update(label, valueText, pct, brush);
+    public string Label { get; private set; } = "";
+    public string ValueText { get; private set; } = Fmt.None;
+    public double Pct { get; private set; }
+    public Brush Brush { get; private set; } = Fmt.Neutral;
+    public void Update(string label, string valueText, double pct, Brush brush)
+    {
+        Label = label; ValueText = valueText; Pct = pct; Brush = brush;
+        RaiseAll();
+    }
+}
+
 /// <summary>Fila de proceso con dos valores (p. ej. GPU y VRAM, lectura y escritura, descarga y subida).</summary>
-public sealed record ProcPair(string Name, Geometry? Icon, string A, string B);
-public sealed record ProcView(string Name, Geometry? Icon, string CpuText, string MemText, double CpuPct);
-public sealed record NetView(string Name, string DownText, string UpText, string TotalsText);
-public sealed record DriveView(string Name, string Label, string Detail, string PctText, double Pct, Brush Brush, string FreeTotal = "");
+public sealed class ProcPair : Observable
+{
+    public ProcPair(string name, Geometry? icon, string a, string b) => Update(name, icon, a, b);
+    public string Name { get; private set; } = "";
+    public Geometry? Icon { get; private set; }
+    public string A { get; private set; } = "";
+    public string B { get; private set; } = "";
+    public void Update(string name, Geometry? icon, string a, string b)
+    {
+        Name = name; Icon = icon; A = a; B = b;
+        RaiseAll();
+    }
+}
+
+public sealed class ProcView : Observable
+{
+    public ProcView(string name, Geometry? icon, string cpuText, string memText, double cpuPct) => Update(name, icon, cpuText, memText, cpuPct);
+    public string Name { get; private set; } = "";
+    public Geometry? Icon { get; private set; }
+    public string CpuText { get; private set; } = "";
+    public string MemText { get; private set; } = "";
+    public double CpuPct { get; private set; }
+    public void Update(string name, Geometry? icon, string cpuText, string memText, double cpuPct)
+    {
+        Name = name; Icon = icon; CpuText = cpuText; MemText = memText; CpuPct = cpuPct;
+        RaiseAll();
+    }
+}
+
+public sealed class NetView : Observable
+{
+    public NetView(string name, string downText, string upText, string totalsText) => Update(name, downText, upText, totalsText);
+    public string Name { get; private set; } = "";
+    public string DownText { get; private set; } = "";
+    public string UpText { get; private set; } = "";
+    public string TotalsText { get; private set; } = "";
+    public void Update(string name, string downText, string upText, string totalsText)
+    {
+        Name = name; DownText = downText; UpText = upText; TotalsText = totalsText;
+        RaiseAll();
+    }
+}
+
+public sealed class DriveView : Observable
+{
+    public DriveView(string name, string label, string detail, string pctText, double pct, Brush brush, string freeTotal = "")
+        => Update(name, label, detail, pctText, pct, brush, freeTotal);
+    public string Name { get; private set; } = "";
+    public string Label { get; private set; } = "";
+    public string Detail { get; private set; } = "";
+    public string PctText { get; private set; } = "";
+    public double Pct { get; private set; }
+    public Brush Brush { get; private set; } = Fmt.Neutral;
+    public string FreeTotal { get; private set; } = "";
+    public void Update(string name, string label, string detail, string pctText, double pct, Brush brush, string freeTotal)
+    {
+        Name = name; Label = label; Detail = detail; PctText = pctText; Pct = pct; Brush = brush; FreeTotal = freeTotal;
+        RaiseAll();
+    }
+}
 
 /// <summary>Datos de las páginas nuevas: tarjetas del resumen, gráfica de uso, temperaturas, procesos, red y unidades.</summary>
 public sealed partial class MainViewModel
@@ -29,7 +101,6 @@ public sealed partial class MainViewModel
         _sortByMem = byMemory;
         Rerender();
     }
-    private List<DriveView> _drives = new();
     private int _driveTick;
     private readonly DateTime _started = DateTime.Now;
 
@@ -120,11 +191,12 @@ public sealed partial class MainViewModel
 
     // ---------------------------------------------------------------- FPS (overlay)
     private readonly RingBuffer _fpsHist = new(120);
+    private readonly ChartSeries _fpsChart = new(120);
     public string FpsText { get; private set; } = "–";
     public Brush FpsBrush { get; private set; } = Fmt.Faint;
     public string FrametimeText { get; private set; } = Fmt.None;
     public string FpsSource { get; private set; } = " ";
-    public double[] FpsSeries { get; private set; } = Array.Empty<double>();
+    public SeriesView? FpsSeries { get; private set; }
 
     // ---------------------------------------------------------------- Encabezado
     public string LiveText { get; private set; } = Loc.T("Starting");
@@ -143,7 +215,8 @@ public sealed partial class MainViewModel
     public string StorageFreeTotal { get; private set; } = Fmt.None;
     public string GpuClockGhz { get; private set; } = Fmt.None;
     public string CpuTempCard { get; private set; } = Fmt.None;
-    public double[] CpuLoadSeries { get; private set; } = Array.Empty<double>();
+    private readonly ChartSeries _cpuLoadChart = new(HistorySeconds);
+    public SeriesView? CpuLoadSeries { get; private set; }
 
     // ---------------------------------------------------------------- Gráfica de uso
     public int ChartRange => _settings.ChartRange;
@@ -158,22 +231,25 @@ public sealed partial class MainViewModel
     }
 
     // ---------------------------------------------------------------- Listas
-    public List<BarRow> TempRows { get; private set; } = new();
+    // Filas reutilizadas (patrón de Cores/CoreRow): la colección es fija y las filas se refrescan con
+    // Update; solo se añade o quita alguna cuando cambia cuántas hay. WPF deja de reconstruir cada
+    // ItemsControl una vez por segundo.
+    public ObservableCollection<BarRow> TempRows { get; } = new();
     public Visibility NoTempsVisibility => TempRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-    public List<ProcView> TopCpu { get; private set; } = new();
-    public List<ProcView> TopMem { get; private set; } = new();
-    public List<ProcPair> TopCpuPage { get; private set; } = new();
-    public List<ProcPair> TopGpu { get; private set; } = new();
-    public List<ProcPair> TopDisk { get; private set; } = new();
-    public List<ProcPair> TopNet { get; private set; } = new();
+    public ObservableCollection<ProcView> TopCpu { get; } = new();
+    public ObservableCollection<ProcView> TopMem { get; } = new();
+    public ObservableCollection<ProcPair> TopCpuPage { get; } = new();
+    public ObservableCollection<ProcPair> TopGpu { get; } = new();
+    public ObservableCollection<ProcPair> TopDisk { get; } = new();
+    public ObservableCollection<ProcPair> TopNet { get; } = new();
     private bool _netByProcess;
     public Visibility NoGpuProcsVisibility => TopGpu.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     public Visibility NoDiskProcsVisibility => TopDisk.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     public Visibility NoNetProcsVisibility => TopNet.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
     public string NoNetProcsText => Loc.T(_netByProcess ? "NoActivity" : "NetNeedsAdmin");
-    public List<BarRow> FanRows { get; private set; } = new();
+    public ObservableCollection<BarRow> FanRows { get; } = new();
     public Visibility NoFansVisibility => FanRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-    public List<DriveView> Drives => _drives;
+    public ObservableCollection<DriveView> Drives { get; } = new();
 
     // ---------------------------------------------------------------- Memoria
     public string VirtText { get; private set; } = Fmt.None;
@@ -182,9 +258,10 @@ public sealed partial class MainViewModel
     // ---------------------------------------------------------------- Red
     public string NetDownText { get; private set; } = Fmt.None;
     public string NetUpText { get; private set; } = Fmt.None;
-    public double[] NetDownSeries { get; private set; } = Array.Empty<double>();
-    public double[] NetUpSeries { get; private set; } = Array.Empty<double>();
-    public List<NetView> NetRows { get; private set; } = new();
+    private readonly ChartSeries _netDownChart = new(HistorySeconds), _netUpChart = new(HistorySeconds);
+    public SeriesView? NetDownSeries { get; private set; }
+    public SeriesView? NetUpSeries { get; private set; }
+    public ObservableCollection<NetView> NetRows { get; } = new();
     public Visibility NoNetVisibility => NetRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
     // ---------------------------------------------------------------- Estilo del overlay
@@ -226,7 +303,7 @@ public sealed partial class MainViewModel
             foreach (var gone in _cpuSmooth.Keys.Where(k => !seen.Contains(k)).ToList()) _cpuSmooth.Remove(gone);
         }
         _fpsHist.Add(s.Fps ?? 0);
-        if (_driveTick++ % 5 == 0) _drives = ReadDrives();
+        if (_driveTick++ % 5 == 0) _ = RefreshDrivesAsync();
     }
 
     private void RenderExtra(Snapshot s)
@@ -239,15 +316,15 @@ public sealed partial class MainViewModel
         FpsBrush = s.Fps is null ? Fmt.Faint : Fmt.Neutral;
         FrametimeText = s.FrametimeMs is double ft ? $"{ft:F1} ms" : "–";
         FpsSource = s.FpsProcess ?? Loc.T(IsAdmin ? "NoGame" : "FpsNeedsAdmin");
-        FpsSeries = s.Fps is null ? Array.Empty<double>() : _fpsHist.ToArray();
+        FpsSeries = s.Fps is null ? null : _fpsChart.Snapshot(_fpsHist);
 
         // Tarjetas
         CpuCardSub = JoinDot(s.CpuTempMax is double t ? Fmt.Temp(t) : null, s.CpuClockAvg is double c ? Fmt.Ghz(c) : null);
         GpuCardSub = JoinDot(s.GpuTemp is double gt ? Fmt.Temp(gt) : null, s.GpuCoreClock is double gc ? Fmt.Mhz(gc) : null);
         RamPctText = Fmt.Pct(s.RamLoad);
         RamCardSub = s.RamUsedGb is double ru && s.RamAvailGb is double ra ? $"{ru:F1} / {ru + ra:F1} GB" : " ";
-        var sys = _drives.FirstOrDefault(d => d.Name.StartsWith(Path.GetPathRoot(Environment.SystemDirectory)?.TrimEnd('\\') ?? "C:", StringComparison.OrdinalIgnoreCase))
-                  ?? _drives.FirstOrDefault();
+        var sys = Drives.FirstOrDefault(d => d.Name.StartsWith(Path.GetPathRoot(Environment.SystemDirectory)?.TrimEnd('\\') ?? "C:", StringComparison.OrdinalIgnoreCase))
+                  ?? Drives.FirstOrDefault();
         StoragePctText = sys?.PctText ?? Fmt.None;
         StoragePct = sys?.Pct ?? 0;
         StorageCardSub = sys != null ? $"{sys.Name} · {sys.Detail}" : " ";
@@ -255,7 +332,7 @@ public sealed partial class MainViewModel
         StorageFreeTotal = sys?.FreeTotal ?? Fmt.None;
         GpuClockGhz = Fmt.Ghz(s.GpuCoreClock);
         CpuTempCard = Fmt.Temp(s.CpuTempMax);
-        CpuLoadSeries = _cpuLoadHist.ToArray();
+        CpuLoadSeries = _cpuLoadChart.Snapshot(_cpuLoadHist);
 
         CpuLoadPct = s.CpuLoad ?? 0;
         GpuLoadPct = s.GpuLoad ?? 0;
@@ -269,35 +346,77 @@ public sealed partial class MainViewModel
         // Temperaturas: los sensores marcados en Ajustes → Temperaturas (barra sobre 0–105 °C).
         // Por defecto: CPU máx., GPU, GPU hotspot y la temperatura principal de cada disco.
         UpdateTempChoices(s);
-        TempRows = SelectedTempRows();
+        int ti = 0;
+        foreach (var tc in TempChoices)
+        {
+            if (!tc.IsChecked || tc.Value is not double v) continue;
+            double pct = Math.Clamp(v / 105 * 100, 0, 100);
+            string label = tc.ShortLabel, text = Fmt.Temp(tc.Value);
+            if (ti == TempRows.Count) TempRows.Add(new BarRow(label, text, pct, tc.Bar));
+            else TempRows[ti].Update(label, text, pct, tc.Bar);
+            ti++;
+        }
+        Trim(TempRows, ti);
 
         // Ventiladores
-        FanRows = s.Fans.Where(f => f.Rpm is > 0).Select(f => new BarRow(f.Name, $"{f.Rpm:F0} RPM", Math.Clamp((f.Rpm ?? 0) / 5000 * 100, 0, 100), BarCpu)).ToList();
-
-        // Procesos
-        ProcView View(ProcInfo p)
+        int fi = 0;
+        foreach (var f in s.Fans)
         {
-            double cpu = _cpuSmooth.TryGetValue(p.Name, out var c) ? c : p.CpuPct;
-            return new(p.Name, Application.Current.TryFindResource(ProcessMonitor.IconKey(p.Name)) as Geometry,
-                $"{cpu:F1} %", FormatBytes(p.MemBytes), cpu);
+            if (f.Rpm is not double rpm) continue;
+            string name = f.Name, text = $"{rpm:F0} RPM";
+            double pct = Math.Clamp(rpm / 5000 * 100, 0, 100);
+            if (fi == FanRows.Count) FanRows.Add(new BarRow(name, text, pct, BarCpu));
+            else FanRows[fi].Update(name, text, pct, BarCpu);
+            fi++;
         }
+        Trim(FanRows, fi);
+
+        // Procesos: filas reutilizadas, solo se añade o quita alguna si cambia cuántas hay.
+        Geometry? Ic(ProcInfo p) => Application.Current.TryFindResource(ProcessMonitor.IconKey(p.Name)) as Geometry;
+        void FillView(ObservableCollection<ProcView> rows, IEnumerable<ProcInfo> procs)
+        {
+            int i = 0;
+            foreach (var p in procs)
+            {
+                double cpu = _cpuSmooth.TryGetValue(p.Name, out var c) ? c : p.CpuPct;
+                var icon = Ic(p);
+                string cpuText = $"{cpu:F1} %", memText = FormatBytes(p.MemBytes);
+                if (i == rows.Count) rows.Add(new ProcView(p.Name, icon, cpuText, memText, cpu));
+                else rows[i].Update(p.Name, icon, cpuText, memText, cpu);
+                i++;
+            }
+            Trim(rows, i);
+        }
+        void FillPair(ObservableCollection<ProcPair> rows, IEnumerable<ProcInfo> procs, Func<ProcInfo, (string a, string b)> fmt)
+        {
+            int i = 0;
+            foreach (var p in procs)
+            {
+                var (a, b) = fmt(p);
+                var icon = Ic(p);
+                if (i == rows.Count) rows.Add(new ProcPair(p.Name, icon, a, b));
+                else rows[i].Update(p.Name, icon, a, b);
+                i++;
+            }
+            Trim(rows, i);
+        }
+
         // Orden por CPU suavizado (si no, los procesos saltan de puesto en cada lectura) o por memoria.
-        TopCpu = (_sortByMem
-                ? _procs.OrderByDescending(p => p.MemBytes)
-                : _procs.OrderByDescending(p => _cpuSmooth.GetValueOrDefault(p.Name)).ThenByDescending(p => p.MemBytes))
-            .Take(5).Select(View).ToList();
-        TopMem = _procs.OrderByDescending(p => p.MemBytes).Take(8).Select(View).ToList();
+        var byCpu = _sortByMem
+            ? _procs.OrderByDescending(p => p.MemBytes)
+            : _procs.OrderByDescending(p => _cpuSmooth.GetValueOrDefault(p.Name)).ThenByDescending(p => p.MemBytes);
+        FillView(TopCpu, byCpu.Take(5));
+        FillView(TopMem, _procs.OrderByDescending(p => p.MemBytes).Take(8));
 
         // Listas por página: solo procesos con actividad, ordenados de mayor a menor.
-        Geometry? Ic(ProcInfo p) => Application.Current.TryFindResource(ProcessMonitor.IconKey(p.Name)) as Geometry;
-        TopCpuPage = _procs.OrderByDescending(p => _cpuSmooth.GetValueOrDefault(p.Name)).Take(8)
-            .Select(p => new ProcPair(p.Name, Ic(p), $"{_cpuSmooth.GetValueOrDefault(p.Name, p.CpuPct):F1} %", "")).ToList();
-        TopGpu = _procs.Where(p => p.GpuPct >= 0.1).OrderByDescending(p => p.GpuPct).Take(8)
-            .Select(p => new ProcPair(p.Name, Ic(p), $"{p.GpuPct:F1} %", p.GpuMem > 0 ? FormatBytes(p.GpuMem) : "—")).ToList();
-        TopDisk = _procs.Where(p => p.ReadBps + p.WriteBps >= 1024).OrderByDescending(p => p.ReadBps + p.WriteBps).Take(8)
-            .Select(p => new ProcPair(p.Name, Ic(p), Fmt.Rate(p.ReadBps), Fmt.Rate(p.WriteBps))).ToList();
-        TopNet = _procs.Where(p => p.NetDownBps + p.NetUpBps >= 1).OrderByDescending(p => p.NetDownBps + p.NetUpBps).Take(8)
-            .Select(p => new ProcPair(p.Name, Ic(p), Fmt.Rate(p.NetDownBps), Fmt.Rate(p.NetUpBps))).ToList();
+        FillPair(TopCpuPage, _procs.OrderByDescending(p => _cpuSmooth.GetValueOrDefault(p.Name)).Take(8),
+            p => ($"{_cpuSmooth.GetValueOrDefault(p.Name, p.CpuPct):F1} %", ""));
+        FillPair(TopGpu, _procs.Where(p => p.GpuPct >= 0.1).OrderByDescending(p => p.GpuPct).Take(8),
+            p => ($"{p.GpuPct:F1} %", p.GpuMem > 0 ? FormatBytes(p.GpuMem) : "—"));
+        FillPair(TopDisk, _procs.Where(p => p.ReadBps + p.WriteBps >= 1024).OrderByDescending(p => p.ReadBps + p.WriteBps).Take(8),
+            p => (Fmt.Rate(p.ReadBps), Fmt.Rate(p.WriteBps)));
+        FillPair(TopNet, _procs.Where(p => p.NetDownBps + p.NetUpBps >= 1).OrderByDescending(p => p.NetDownBps + p.NetUpBps).Take(8),
+            p => (Fmt.Rate(p.NetDownBps), Fmt.Rate(p.NetUpBps)));
         if (s.Processes.Count > 0) _netByProcess = s.NetByProcessAvailable;
 
         // Memoria virtual
@@ -310,13 +429,25 @@ public sealed partial class MainViewModel
         // Red
         NetDownText = Fmt.Rate(s.NetDownBps);
         NetUpText = Fmt.Rate(s.NetUpBps);
-        NetDownSeries = _netDownHist.ToArray();
-        NetUpSeries = _netUpHist.ToArray();
-        NetRows = s.Networks
-            .OrderByDescending(n => (n.DownTotalGb ?? 0) + (n.UpTotalGb ?? 0))
-            .Select(n => new NetView(n.Name, Fmt.Rate(n.DownBps), Fmt.Rate(n.UpBps),
-                $"{Loc.T("Received")} {Fmt.Gb(n.DownTotalGb)} · {Loc.T("Sent")} {Fmt.Gb(n.UpTotalGb)}"))
-            .ToList();
+        NetDownSeries = _netDownChart.Snapshot(_netDownHist);
+        NetUpSeries = _netUpChart.Snapshot(_netUpHist);
+        int ni = 0;
+        foreach (var n in s.Networks.OrderByDescending(n => (n.DownTotalGb ?? 0) + (n.UpTotalGb ?? 0)))
+        {
+            string name = n.Name, down = Fmt.Rate(n.DownBps), up = Fmt.Rate(n.UpBps),
+                   totals = $"{Loc.T("Received")} {Fmt.Gb(n.DownTotalGb)} · {Loc.T("Sent")} {Fmt.Gb(n.UpTotalGb)}";
+            if (ni == NetRows.Count) NetRows.Add(new NetView(name, down, up, totals));
+            else NetRows[ni].Update(name, down, up, totals);
+            ni++;
+        }
+        Trim(NetRows, ni);
+    }
+
+    /// <summary>Quita las filas que sobran (las listas se rellenan por posición: solo cambia su número,
+    /// no su contenido, cuando aparece o desaparece un proceso).</summary>
+    private static void Trim<T>(ObservableCollection<T> rows, int count)
+    {
+        while (rows.Count > count) rows.RemoveAt(rows.Count - 1);
     }
 
     private static string JoinDot(params string?[] parts)
@@ -332,6 +463,31 @@ public sealed partial class MainViewModel
         _ => $"{b / 1024.0:F0} KB",
     };
 
+    private bool _drivesBusy;
+
+    /// <summary>Lee las unidades fuera del hilo de la interfaz: con una unidad de red mapeada caída,
+    /// IsReady puede bloquearse varios segundos y antes congelaba la ventana. Al volver, la colección
+    /// se actualiza en sitio (mismas unidades → Update; alguna de más o de menos → añadir o quitar).</summary>
+    private async Task RefreshDrivesAsync()
+    {
+        if (_drivesBusy) return; // la lectura anterior aún no ha vuelto: no se solapan ni llegan desordenadas
+        _drivesBusy = true;
+        try
+        {
+            var fresh = await Task.Run(ReadDrives);
+            int i = 0;
+            foreach (var d in fresh)
+            {
+                if (i == Drives.Count) Drives.Add(new DriveView(d.Name, d.Label, d.Detail, d.PctText, d.Pct, d.Brush, d.FreeTotal));
+                else Drives[i].Update(d.Name, d.Label, d.Detail, d.PctText, d.Pct, d.Brush, d.FreeTotal);
+                i++;
+            }
+            Trim(Drives, i);
+        }
+        catch (Exception ex) { ErrorLog.Write("Drives", ex); }
+        finally { _drivesBusy = false; }
+    }
+
     private static List<DriveView> ReadDrives()
     {
         var list = new List<DriveView>();
@@ -339,7 +495,10 @@ public sealed partial class MainViewModel
         {
             try
             {
-                if (!d.IsReady || d.DriveType is not (DriveType.Fixed or DriveType.Removable) || d.TotalSize <= 0) continue;
+                // DriveType no toca la unidad (sale del formato de la letra); IsReady sí. Con una unidad de
+                // red caída, IsReady podía congelar la llamada: por eso el tipo se filtra primero.
+                if (d.DriveType is not (DriveType.Fixed or DriveType.Removable)) continue;
+                if (!d.IsReady || d.TotalSize <= 0) continue;
                 double used = d.TotalSize - d.TotalFreeSpace;
                 double pct = used / d.TotalSize * 100;
                 var brush = pct >= 90 ? Fmt.Hot : pct >= 80 ? Fmt.Warn : BarDisk;

@@ -160,8 +160,9 @@ public sealed partial class MainViewModel : Observable
     public string CpuPowerSub { get; private set; } = " ";
     public string CpuDetails { get; private set; } = " ";
     public ObservableCollection<CoreRow> Cores { get; } = new();
-    public double[] CpuTempSeries { get; private set; } = Array.Empty<double>();
-    public double[] CpuClockSeries { get; private set; } = Array.Empty<double>();
+    private readonly ChartSeries _cpuTempChart = new(HistorySeconds), _cpuClockChart = new(HistorySeconds);
+    public SeriesView? CpuTempSeries { get; private set; }
+    public SeriesView? CpuClockSeries { get; private set; }
 
     // ---------------------------------------------------------------- GPU
     public string GpuName { get; private set; } = "";
@@ -177,14 +178,16 @@ public sealed partial class MainViewModel : Observable
     public string GpuDetails { get; private set; } = " ";
     public string VramText { get; private set; } = Fmt.None;
     public double VramPct { get; private set; }
-    public double[] GpuTempSeries { get; private set; } = Array.Empty<double>();
-    public double[] GpuLoadSeries { get; private set; } = Array.Empty<double>();
+    private readonly ChartSeries _gpuTempChart = new(HistorySeconds), _gpuLoadChart = new(HistorySeconds);
+    public SeriesView? GpuTempSeries { get; private set; }
+    public SeriesView? GpuLoadSeries { get; private set; }
 
     // ---------------------------------------------------------------- RAM, discos, energía
     public string RamText { get; private set; } = Fmt.None;
     public string RamDetail { get; private set; } = " ";
     public double RamPct { get; private set; }
-    public double[] RamSeries { get; private set; } = Array.Empty<double>();
+    private readonly ChartSeries _ramChart = new(HistorySeconds);
+    public SeriesView? RamSeries { get; private set; }
 
     public ObservableCollection<DiskRow> Disks { get; } = new();
     public Visibility NoDisksVisibility => Disks.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -391,8 +394,8 @@ public sealed partial class MainViewModel : Observable
         CpuDetails = Join(
             s.CpuTempPkg is double p ? Loc.F("Package", Fmt.Temp(p)) : null,
             s.TjDistanceMin is double tj ? Loc.F("TjMargin", Fmt.Temp(tj)) : null);
-        CpuTempSeries = _cpuTempHist.ToArray();
-        CpuClockSeries = _cpuClockHist.ToArray();
+        CpuTempSeries = _cpuTempChart.Snapshot(_cpuTempHist);
+        CpuClockSeries = _cpuClockChart.Snapshot(_cpuClockHist);
 
         if (Cores.Count != s.Cores.Count)
         {
@@ -422,8 +425,8 @@ public sealed partial class MainViewModel : Observable
             VramPct = vu / vt * 100;
         }
         else { VramText = s.VramUsedMb is double only ? Fmt.Gb(only / 1024) : Fmt.None; VramPct = 0; }
-        GpuTempSeries = _gpuTempHist.ToArray();
-        GpuLoadSeries = _gpuLoadHist.ToArray();
+        GpuTempSeries = _gpuTempChart.Snapshot(_gpuTempHist);
+        GpuLoadSeries = _gpuLoadChart.Snapshot(_gpuLoadHist);
 
         // RAM
         if (s.RamUsedGb is double ru && s.RamAvailGb is double ra)
@@ -433,7 +436,7 @@ public sealed partial class MainViewModel : Observable
         }
         else { RamText = Fmt.None; RamDetail = " "; }
         RamPct = s.RamLoad ?? 0;
-        RamSeries = _ramHist.ToArray();
+        RamSeries = _ramChart.Snapshot(_ramHist);
 
         // Discos
         var seen = new HashSet<string>();
