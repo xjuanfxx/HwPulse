@@ -26,7 +26,7 @@ public sealed class CoreRow : Observable
 
     public void Update(CoreReading r)
     {
-        Name = $"{Loc.T("Core")} {Index}";
+        Name = r.Label is { } lbl ? $"{Loc.T("Core")} {lbl}" : $"{Loc.T("Core")} {Index}";
         ClockText = Fmt.Ghz(r.ClockMhz);
         TempText = Fmt.Temp(r.TempC);
         TempBrush = Fmt.TempBrush(r.TempC);
@@ -252,20 +252,34 @@ public sealed partial class MainViewModel : Observable
     public bool CornerTR { get => _settings.Corner == OverlayCorner.TopRight; set { if (value) SetCorner(OverlayCorner.TopRight); } }
     public bool CornerBL { get => _settings.Corner == OverlayCorner.BottomLeft; set { if (value) SetCorner(OverlayCorner.BottomLeft); } }
     public bool CornerBR { get => _settings.Corner == OverlayCorner.BottomRight; set { if (value) SetCorner(OverlayCorner.BottomRight); } }
+    public bool CornerBC { get => _settings.Corner == OverlayCorner.BottomCenter; set { if (value) SetCorner(OverlayCorner.BottomCenter); } }
+    /// <summary>Posición libre (colocada con el ratón desde el editor): ningún botón de esquina queda marcado.</summary>
+    public Visibility CornerCustomVisibility => _settings.Corner == OverlayCorner.Custom ? Visibility.Visible : Visibility.Collapsed;
 
     public void SetCorner(OverlayCorner c)
     {
         _settings.Corner = c;
         Raise(nameof(CornerTC)); Raise(nameof(CornerTL)); Raise(nameof(CornerTR)); Raise(nameof(CornerBL)); Raise(nameof(CornerBR));
+        Raise(nameof(CornerBC)); Raise(nameof(CornerCustomVisibility));
         OverlayLayoutChanged?.Invoke();
     }
 
+    /// <summary>Posición libre en fracción de pantalla (la guarda el overlay al soltarlo tras arrastrarlo).</summary>
+    public void SetCustomPosition(double x, double y)
+    {
+        _settings.OverlayX = Math.Clamp(x, 0, 1);
+        _settings.OverlayY = Math.Clamp(y, 0, 1);
+        SetCorner(OverlayCorner.Custom);
+    }
+
+    // Atajo de teclado: recorre las 6 posiciones fijas en el sentido de las agujas del reloj.
     public void CycleCorner() => SetCorner(_settings.Corner switch
     {
-        OverlayCorner.TopCenter => OverlayCorner.TopRight,
         OverlayCorner.TopLeft => OverlayCorner.TopCenter,
+        OverlayCorner.TopCenter => OverlayCorner.TopRight,
         OverlayCorner.TopRight => OverlayCorner.BottomRight,
-        OverlayCorner.BottomRight => OverlayCorner.BottomLeft,
+        OverlayCorner.BottomRight => OverlayCorner.BottomCenter,
+        OverlayCorner.BottomCenter => OverlayCorner.BottomLeft,
         _ => OverlayCorner.TopLeft,
     });
 
@@ -418,8 +432,9 @@ public sealed partial class MainViewModel : Observable
         GpuTempBrush = Fmt.TempBrush(s.GpuTemp);
         GpuTempMinMax = Fmt.MinMax(_gpuTemp, Fmt.TempShort);
         GpuCoreClockText = Fmt.Mhz(s.GpuCoreClock);
-        GpuPowerText = Fmt.Watts(s.GpuPower);
-        bool gpuNoPower = !string.IsNullOrEmpty(s.GpuName) && s.GpuPower is null;
+        // Sin vatios pero con % del máximo (respaldo de Windows): se muestra el porcentaje.
+        GpuPowerText = s.GpuPower is null && s.GpuPowerPct is double pp ? Fmt.Pct(pp) : Fmt.Watts(s.GpuPower);
+        bool gpuNoPower = !string.IsNullOrEmpty(s.GpuName) && s.GpuPower is null && s.GpuPowerPct is null;
         GpuPowerTip = gpuNoPower ? Loc.T("GpuPowerNotReported") : null;
         GpuPowerMinMax = gpuNoPower ? GpuPowerTip! : Fmt.MinMax(_gpuPower, Fmt.Watts);
         GpuDetails = Join(
@@ -526,6 +541,10 @@ public sealed partial class MainViewModel : Observable
         nameof(GpuTempShort), nameof(GpuTempBrush), nameof(FpsText), nameof(FpsBrush), nameof(FrametimeText), nameof(FpsSource),
         nameof(FpsSeries), nameof(CpuLoadPct), nameof(GpuLoadPct), nameof(VramPct), nameof(GpuVramShort), nameof(RamPct),
         nameof(RamShort), nameof(TotalPowerText), nameof(ThrottleVisibility), nameof(StatusText), nameof(TrayText),
+        // Datos extra del overlay personalizado
+        nameof(CpuPowerText), nameof(GpuPowerText), nameof(GpuCoreClockText), nameof(ClockTimeText),
+        nameof(CpuLoadSeries), nameof(CpuTempSeries), nameof(CpuClockSeries), nameof(GpuLoadSeries), nameof(GpuTempSeries),
+        nameof(RamSeries), nameof(FpsActive),
     };
 
     private static string Join(params string?[] parts)

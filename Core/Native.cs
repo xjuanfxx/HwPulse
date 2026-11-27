@@ -27,6 +27,10 @@ internal static class Native
     [DllImport("user32.dll", EntryPoint = "SetWindowLongW")]
     public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
 
+    /// <summary>Habilita o deshabilita la entrada de ratón/teclado de una ventana.</summary>
+    [DllImport("user32.dll")]
+    public static extern bool EnableWindow(IntPtr hWnd, bool enable);
+
     [DllImport("user32.dll", SetLastError = true)]
     public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int x, int y, int cx, int cy, uint flags);
 

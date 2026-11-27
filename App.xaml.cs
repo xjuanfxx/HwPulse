@@ -40,6 +40,7 @@ public partial class App : Application
     {
         base.OnStartup(e);
         ErrorLog.Install(this);
+        SliderDragFix.Install(); // clic en la pista de cualquier slider: salta y se puede seguir arrastrando
         // Si Windows cierra la app (apagado, fin de sesión, kill), liberar todo lo que quede vivo: la sesión
         // ETW de FPS, el Computer de LibreHardwareMonitor (descarga los módulos de PawnIO), el panel web y
         // cualquier recurso que siga abriéndose en segundo plano.
@@ -72,6 +73,42 @@ public partial class App : Application
         if (benchIdx >= 0 && benchIdx + 1 < args.Length)
         {
             File.WriteAllText(args[benchIdx + 1], SensorService.Bench());
+            Shutdown();
+            return;
+        }
+
+        // --fps-probe <archivo>: escucha 5 s los eventos de presentación (DirectX y kernel) y anota cuántos
+        // por segundo ve de cada proceso. Para comprobar FPS en juegos Vulkan/OpenGL. Necesita administrador.
+        int probeIdx = Array.IndexOf(args, "--fps-probe");
+        if (probeIdx >= 0 && probeIdx + 1 < args.Length)
+        {
+            using var probe = FpsMonitor.TryStart();
+            Thread.Sleep(5000);
+            File.WriteAllText(args[probeIdx + 1], probe == null ? "ETW session failed (admin required)" + Environment.NewLine
+                : $"foreground pid {Native.ForegroundProcessId()}" + Environment.NewLine + probe.DescribeRates());
+            Shutdown();
+            return;
+        }
+
+        // --native-probe <archivo>: prueba los respaldos de Windows (reloj del CPU y datos de GPU por D3DKMT).
+        int nativeIdx = Array.IndexOf(args, "--native-probe");
+        if (nativeIdx >= 0 && nativeIdx + 1 < args.Length)
+        {
+            using var native = new NativeSensors();
+            native.CpuClockMhz();
+            Thread.Sleep(1000);
+            var lines = new List<string> { $"CPU clock (counters): {native.CpuClockMhz()?.ToString("0") ?? "unavailable"} MHz" };
+            foreach (var g in native.AllGpus())
+                lines.Add($"GPU '{g.Name}': temp={g.TempC?.ToString("0.0") ?? "-"} C, fan={g.FanRpm?.ToString("0") ?? "-"} rpm, power={g.PowerPct?.ToString("0.0") ?? "-"} %");
+            File.WriteAllLines(args[nativeIdx + 1], lines);
+            Shutdown();
+            return;
+        }
+
+        int selfIdx = Array.IndexOf(args, "--selftest-cpu");
+        if (selfIdx >= 0 && selfIdx + 1 < args.Length)
+        {
+            File.WriteAllText(args[selfIdx + 1], SensorService.SelfTestCores());
             Shutdown();
             return;
         }
@@ -148,6 +185,14 @@ public partial class App : Application
         _ = StartSensorsAsync();
         Updater.CleanupOld();
         if (_renderDir == null) StartUpdateChecks();
+
+#if DEBUG
+        // --editor (solo desarrollo): abre el editor del overlay al arrancar, para revisarlo en vivo.
+        if (args.Contains("--editor")) Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, OpenOverlayEditor);
+        // --move-mode (solo desarrollo): activa "mover con el ratón" poco después de abrir el editor, para comprobarlo.
+        if (args.Contains("--move-mode"))
+            new DispatcherTimer(TimeSpan.FromSeconds(4), DispatcherPriority.Normal, (t, _) => { ((DispatcherTimer)t!).Stop(); SetOverlayMoveMode(true); }, Dispatcher).Start();
+#endif
 
         // --fake-pawnio installing|done|reboot|failed: muestra ese estado del aviso de PawnIO (desarrollo).
         int fakePawnio = Array.IndexOf(args, "--fake-pawnio");
@@ -313,6 +358,18 @@ public partial class App : Application
         new ColorsWindow(_vm) { Owner = _main }.ShowDialog();
         _settings.Save();
     }
+
+    /// <summary>Editor visual del overlay personalizado (con el overlay visible para ver los cambios en vivo).</summary>
+    public void OpenOverlayEditor()
+    {
+        if (!_vm.OverlayVisible) _vm.OverlayVisible = true;
+        if (!_vm.OverlayCustom) _vm.OverlayCustom = true;
+        new OverlayEditorWindow(_vm) { Owner = _main }.ShowDialog();
+        _settings.Save();
+    }
+
+    /// <summary>Modo "mover con el ratón" del overlay (desde el editor): deja de ignorar los clics y se arrastra.</summary>
+    public void SetOverlayMoveMode(bool on) => _overlay?.SetMoveMode(on);
 
     public void OpenWeb() { if (_web?.Url is string u) OpenUrl(u); }
 
@@ -491,7 +548,7 @@ public partial class App : Application
     private void EnsureFpsMonitor()
     {
         if (_fps != null || _fpsTried || !_vm.IsAdmin) return;
-        bool overlayFps = _vm.OverlayVisible && _vm.OverlayHasFps;
+        bool overlayFps = _vm.OverlayVisible && (_vm.OverlayHasFps || _settings.OverlayOnlyInGame);
         bool netPage = _vm.UiVisible && _vm.CurrentPage == "Network";
         bool webFps = _web?.HasClients == true;
         if (!overlayFps && !netPage && !webFps) return;
@@ -582,7 +639,30 @@ public partial class App : Application
         cw.UpdateLayout();
         Save((FrameworkElement)cw.Content, $"{Loc.I.Lang}-colors.png");
         cw.Close();
-        if (prevStyle) _vm.OverlayPanel = true;
+
+        // Overlay personalizado: cada preset, y el editor. Se restaura el diseño y el estilo del usuario.
+        string prevStyleName = _settings.OverlayStyle;
+        var prevLayout = _settings.OverlayLayout?.Clone();
+        foreach (var preset in OverlayLayout.PresetKeys)
+        {
+            _vm.SetCustomLayout(OverlayLayout.Preset(preset));
+            _vm.OverlayCustom = true;
+            _overlay.RebuildCustom();
+            _overlay.RenderNow();
+            _overlay.UpdateLayout();
+            // La imagen tal cual la muestra la ventana del overlay (incluye márgenes; SourceContent los recorta).
+            Save((FrameworkElement)_overlay.Content, $"{Loc.I.Lang}-overlay-custom-{preset}.png");
+        }
+        var ed = new OverlayEditorWindow(_vm) { Owner = _main };
+        ed.Show();
+        ed.UpdateLayout();
+        Save((FrameworkElement)ed.Content, $"{Loc.I.Lang}-overlay-editor.png");
+        ed.Close();
+        _settings.OverlayLayout = prevLayout;
+        if (prevStyleName == "panel") _vm.OverlayPanel = true;
+        else if (prevStyleName == "custom") _vm.OverlayCustom = true;
+        else _vm.OverlayCompact = true;
+        _overlay.RebuildCustom();
     }
 
     private static System.Windows.Controls.ScrollViewer? FindScroll(DependencyObject? d)

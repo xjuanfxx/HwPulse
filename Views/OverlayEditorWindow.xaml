@@ -1,0 +1,173 @@
+<Window x:Class="HwPulse.OverlayEditorWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:HwPulse"
+        Title="HwPulse" Width="1040" Height="680" MinWidth="900" MinHeight="560" ShowInTaskbar="False"
+        WindowStartupLocation="CenterOwner"
+        Background="{StaticResource Bg}" Foreground="{StaticResource Text}"
+        FontFamily="{StaticResource UiFont}" FontSize="12"
+        TextOptions.TextFormattingMode="Ideal" TextOptions.TextRenderingMode="ClearType" UseLayoutRounding="True">
+    <WindowChrome.WindowChrome>
+        <WindowChrome CaptionHeight="52" ResizeBorderThickness="6" GlassFrameThickness="0" CornerRadius="0" UseAeroCaptionButtons="False"/>
+    </WindowChrome.WindowChrome>
+
+    <Window.Resources>
+        <!-- Menús desplegables (presets, fuente) con el tema oscuro de la app -->
+        <Style TargetType="ContextMenu">
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ContextMenu">
+                        <Border Background="{StaticResource Surface}" BorderBrush="{StaticResource LineStrong}" BorderThickness="1" CornerRadius="8" Padding="4">
+                            <StackPanel IsItemsHost="True"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <Style TargetType="MenuItem">
+            <Setter Property="Foreground" Value="{StaticResource Text}"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="MenuItem">
+                        <Border x:Name="b" Background="Transparent" CornerRadius="5" Padding="12,6">
+                            <ContentPresenter ContentSource="Header"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsHighlighted" Value="True">
+                                <Setter TargetName="b" Property="Background" Value="{StaticResource Hover}"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <!-- Botón de alternar con texto (mover con el ratón) -->
+        <Style x:Key="MoveToggle" TargetType="ToggleButton">
+            <Setter Property="Foreground" Value="{StaticResource Text}"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="b" Background="{StaticResource SurfaceAlt}" BorderBrush="{StaticResource LineStrong}" BorderThickness="1" CornerRadius="6" Padding="12,5">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="b" Property="Background" Value="{StaticResource Accent}"/>
+                                <Setter TargetName="b" Property="BorderBrush" Value="{StaticResource Accent}"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+        <!-- Botón de alternar (negrita, barra) -->
+        <Style x:Key="Toggle" TargetType="ToggleButton">
+            <Setter Property="Foreground" Value="{StaticResource Muted}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Width" Value="28"/>
+            <Setter Property="Height" Value="26"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ToggleButton">
+                        <Border x:Name="b" Background="{StaticResource SurfaceAlt}" BorderBrush="{StaticResource LineStrong}" BorderThickness="1" CornerRadius="5">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsChecked" Value="True">
+                                <Setter TargetName="b" Property="Background" Value="{StaticResource Accent}"/>
+                                <Setter TargetName="b" Property="BorderBrush" Value="{StaticResource Accent}"/>
+                                <Setter Property="Foreground" Value="White"/>
+                            </Trigger>
+                            <Trigger Property="IsEnabled" Value="False">
+                                <Setter TargetName="b" Property="Opacity" Value="0.35"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+    </Window.Resources>
+
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="52"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Cabecera: título · presets · importar · exportar · listo -->
+        <DockPanel Margin="20,0,12,0">
+            <Button DockPanel.Dock="Right" Style="{StaticResource SmallButton}" Click="Done_Click" VerticalAlignment="Center" Margin="8,0,0,0"
+                    WindowChrome.IsHitTestVisibleInChrome="True" Content="{Binding [Done], Source={x:Static local:Loc.I}}"/>
+            <Button DockPanel.Dock="Right" Style="{StaticResource SmallButton}" Click="Export_Click" VerticalAlignment="Center" Margin="8,0,0,0"
+                    WindowChrome.IsHitTestVisibleInChrome="True" Content="{Binding [OvExport], Source={x:Static local:Loc.I}}"/>
+            <Button DockPanel.Dock="Right" Style="{StaticResource SmallButton}" Click="Import_Click" VerticalAlignment="Center" Margin="8,0,0,0"
+                    WindowChrome.IsHitTestVisibleInChrome="True" Content="{Binding [OvImport], Source={x:Static local:Loc.I}}"/>
+            <Button x:Name="PresetsBtn" DockPanel.Dock="Right" Style="{StaticResource SmallButton}" Click="Presets_Click" VerticalAlignment="Center"
+                    WindowChrome.IsHitTestVisibleInChrome="True" Content="{Binding [OvPresets], Source={x:Static local:Loc.I}}"/>
+            <!-- Deshacer / rehacer (también Ctrl+Z / Ctrl+Y) -->
+            <Button x:Name="RedoBtn" DockPanel.Dock="Right" Style="{StaticResource SmallButton}" Click="Redo_Click" VerticalAlignment="Center" Margin="0,0,8,0"
+                    WindowChrome.IsHitTestVisibleInChrome="True" FontFamily="Segoe MDL2 Assets" FontSize="13" Content="&#xE7A6;" ToolTip="{Binding [OvRedo], Source={x:Static local:Loc.I}}"/>
+            <Button x:Name="UndoBtn" DockPanel.Dock="Right" Style="{StaticResource SmallButton}" Click="Undo_Click" VerticalAlignment="Center" Margin="0,0,4,0"
+                    WindowChrome.IsHitTestVisibleInChrome="True" FontFamily="Segoe MDL2 Assets" FontSize="13" Content="&#xE7A7;" ToolTip="{Binding [OvUndo], Source={x:Static local:Loc.I}}"/>
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock Style="{StaticResource SectionTitle}" FontSize="15" Text="{Binding [OvEditorTitle], Source={x:Static local:Loc.I}}"/>
+                <TextBlock Style="{StaticResource Hint}" Text="{Binding [OvEditorSub], Source={x:Static local:Loc.I}}" Margin="0,2,0,0"/>
+            </StackPanel>
+        </DockPanel>
+
+        <Grid Grid.Row="1" Margin="20,4,20,20">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="400"/>
+                <ColumnDefinition Width="16"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Izquierda: vista previa + estilo general -->
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                </Grid.RowDefinitions>
+                <Border CornerRadius="10" Height="190" ClipToBounds="True" BorderBrush="{StaticResource Line}" BorderThickness="1">
+                    <!-- Fondo tipo "juego" para ver la transparencia del overlay -->
+                    <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                            <GradientStop Color="#3A4A5C" Offset="0"/>
+                            <GradientStop Color="#1C2530" Offset="0.55"/>
+                            <GradientStop Color="#4B3B2E" Offset="1"/>
+                        </LinearGradientBrush>
+                    </Border.Background>
+                    <ContentControl x:Name="PreviewHost" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                    TextOptions.TextRenderingMode="Grayscale"/>
+                </Border>
+                <ScrollViewer Grid.Row="1" Margin="0,14,0,0" VerticalScrollBarVisibility="Auto">
+                    <StackPanel x:Name="StylePanel" Margin="0,0,8,0"/>
+                </ScrollViewer>
+            </Grid>
+
+            <!-- Derecha: elementos -->
+            <Border Grid.Column="2" Style="{StaticResource Panel}" Padding="14,12">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <DockPanel>
+                        <TextBlock DockPanel.Dock="Right" Style="{StaticResource Hint}" VerticalAlignment="Center"
+                                   Text="{Binding [OvDragHint], Source={x:Static local:Loc.I}}"/>
+                        <TextBlock Style="{StaticResource SectionTitle}" Text="{Binding [OvElements], Source={x:Static local:Loc.I}}"/>
+                    </DockPanel>
+                    <!-- Mismos márgenes que las filas (relleno 6 + margen 6 + barra de desplazamiento si se ve): AlignHeader -->
+                    <Grid x:Name="HeaderRow" Grid.Row="1" Margin="6,10,12,4"/>
+                    <ScrollViewer x:Name="ElementsScroll" Grid.Row="2" VerticalScrollBarVisibility="Auto" ScrollChanged="ElementsScroll_ScrollChanged">
+                        <StackPanel x:Name="ElementsPanel" Margin="0,0,6,0"/>
+                    </ScrollViewer>
+                </Grid>
+            </Border>
+        </Grid>
+    </Grid>
+</Window>

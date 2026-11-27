@@ -41,6 +41,11 @@
   .iconbtn { background: none; border: 1px solid var(--line); color: var(--muted); border-radius: 10px; width: 34px; height: 34px;
              display: grid; place-items: center; cursor: pointer; }
   .iconbtn:hover { color: var(--text); border-color: #333; }
+  /* Sin el recuadro que los navegadores móviles pintan al tocar un botón (se veía un cuadro sin bordes un instante) */
+  button { -webkit-tap-highlight-color: transparent; }
+  .iconbtn:focus { outline: none; }
+  .iconbtn:focus-visible { outline: 2px solid #5b9bd5; outline-offset: 2px; }
+  .iconbtn.on { color: #fff; background: #5b9bd5; border-color: #5b9bd5; }
   .iconbtn svg { width: 16px; height: 16px; }
 
   .status { display: none; margin: 0 0 var(--gap); padding: 10px 14px; border-radius: 12px; background: var(--panel);
@@ -177,6 +182,9 @@
   </div>
   <div class="spacer"></div>
   <div class="live"><span class="dot" id="dot"></span><span id="clock">—</span></div>
+  <button class="iconbtn" id="awake" title="Keep screen on" aria-label="Keep screen on">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><circle cx="8" cy="8" r="2.8"/><path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M3.4 12.6l1.1-1.1M11.5 4.5l1.1-1.1"/></svg>
+  </button>
   <button class="iconbtn" id="layout" title="Layout" aria-label="Layout">
     <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><rect x="1.5" y="3" width="13" height="10" rx="2"/><path d="M6 3v10M6 8h8.5"/></svg>
   </button>
@@ -264,11 +272,11 @@ const T = {
   en: { usage: "usage", clock: "Clock", power: "Power", pkg: "Package", hotspot: "Hotspot", frametime: "Frametime", memory: "Memory",
         network: "Network", down: "Download", up: "Upload", powerSection: "Power & storage", cores: "Cores", source: "Source",
         ac: "AC", battery: "Battery", total: "CPU + GPU", core: "Core", noGame: "no game in focus", offline: "Disconnected",
-        used: "used" },
+        used: "used", awakeOn: "Screen stays on (tap to turn off)", awakeOff: "Keep screen on" },
   es: { usage: "uso", clock: "Reloj", power: "Potencia", pkg: "Paquete", hotspot: "Hotspot", frametime: "Frametime", memory: "Memoria",
         network: "Red", down: "Descarga", up: "Subida", powerSection: "Energía y discos", cores: "Núcleos", source: "Fuente",
         ac: "Corriente", battery: "Batería", total: "CPU + GPU", core: "Núcleo", noGame: "sin juego en primer plano", offline: "Desconectado",
-        used: "ocupado" },
+        used: "ocupado", awakeOn: "La pantalla se mantiene encendida (toca para apagar)", awakeOff: "Mantener la pantalla encendida" },
 };
 let lang = "en";
 const t = k => (T[lang] || T.en)[k] || k;
@@ -330,7 +338,7 @@ function spark(canvas, series, colors) {
 }
 
 function render(d) {
-  if (d.lang && d.lang !== lang) { lang = d.lang; applyLang(); }
+  if (d.lang && d.lang !== lang) { lang = d.lang; applyLang(); $("awake").title = t(awake.on ? "awakeOn" : "awakeOff"); }
   // Colores de la marca del CPU y la GPU (Intel azul, AMD rojo, NVIDIA verde), los mismos que en la app
   if (d.colors) {
     const root = document.documentElement.style;
@@ -440,11 +448,44 @@ if ("EventSource" in window) {
   tick();
   setInterval(tick, 1000);
 }
-// Mantener la pantalla encendida en tablets/teléfonos usados como monitor (si el navegador lo permite).
-if ("wakeLock" in navigator) {
-  const lock = () => navigator.wakeLock.request("screen").catch(() => {});
-  lock(); document.addEventListener("visibilitychange", () => document.visibilityState === "visible" && lock());
+// Mantener la pantalla encendida (tablet/teléfono usado como monitor). Interruptor recordado en el navegador.
+// 1) Wake Lock API: la forma oficial, pero los navegadores solo la dan en páginas seguras (https o localhost).
+// 2) Abriendo la IP de la red local (http) no existe: respaldo con un vídeo mudo de 2×2 px en bucle, generado
+//    con un canvas (sin archivos ni red). Un vídeo reproduciéndose evita que el teléfono apague la pantalla.
+const awake = { on: localStorage.getItem("hwpAwake") !== "0", lock: null, video: null, timer: 0 };
+async function startAwake() {
+  if ("wakeLock" in navigator) {
+    try { awake.lock = await navigator.wakeLock.request("screen"); return; } catch {}
+  }
+  if (!awake.video) {
+    const c = document.createElement("canvas"); c.width = c.height = 2;
+    const g = c.getContext("2d"); let k = 0;
+    const draw = () => { g.fillStyle = (k++ % 2) ? "#000" : "#010101"; g.fillRect(0, 0, 2, 2); };
+    draw(); awake.timer = setInterval(draw, 1000); // un fotograma nuevo por segundo: el vídeo sigue "vivo"
+    const v = document.createElement("video");
+    v.muted = true; v.playsInline = true; v.setAttribute("playsinline", ""); v.loop = true;
+    v.style.cssText = "position:fixed;right:0;bottom:0;width:2px;height:2px;opacity:.01;pointer-events:none";
+    v.srcObject = c.captureStream ? c.captureStream(1) : null;
+    document.body.appendChild(v);
+    awake.video = v;
+  }
+  awake.video.play().catch(() => {});
 }
+function stopAwake() {
+  awake.lock?.release?.().catch?.(() => {}); awake.lock = null;
+  if (awake.video) { awake.video.pause(); clearInterval(awake.timer); awake.video.remove(); awake.video = null; }
+}
+function applyAwake() {
+  $("awake").classList.toggle("on", awake.on);
+  $("awake").title = t(awake.on ? "awakeOn" : "awakeOff");
+  awake.on ? startAwake() : stopAwake();
+}
+$("awake").onclick = () => { awake.on = !awake.on; localStorage.setItem("hwpAwake", awake.on ? "1" : "0"); applyAwake(); };
+// El sistema suelta el bloqueo al cambiar de pestaña o apagar la pantalla: se vuelve a pedir al regresar.
+document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible" && awake.on) startAwake(); });
+// Algunos navegadores solo dejan reproducir el vídeo tras un toque: el primero en la página lo activa.
+document.addEventListener("pointerdown", () => { if (awake.on && !awake.lock) startAwake(); }, { once: true });
+applyAwake();
 </script>
 </body>
 </html>

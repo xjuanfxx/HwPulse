@@ -28,7 +28,7 @@ dotnet build -c Debug          # Debug build: asInvoker manifest, no UAC prompt
 bin\Debug\net10.0-windows\HwPulse.exe --no-elevate --render <dir>
 ```
 - **`--render <dir>`:** renders every page to PNG and writes `en-fit.txt`/`es-fit.txt`. Every page except Sensors must say `OK` (no scrolling). Expect **32 files** (30 PNG + `en-fit.txt` + `es-fit.txt`) and the process must **exit on its own**. If a PNG is missing, something measured 0 (see gotcha 5). Works even with the overlay hidden (`OverlayVisible: false` in `%AppData%\HwPulse\settings.json`).
-- **Other dev flags:** `--fake-update <ver>`, `--fake-pawnio <state>`, `--timing`, `--bench <file>`, `--dump <file>`, `--font "<name>"`, `--minimized`, `--no-elevate`, `--updated` (used internally after a self-update).
+- **Other dev flags:** `--editor` and `--move-mode` (DEBUG), `--native-probe <file>`, `--fps-probe <file>`, `--selftest-cpu <file>`, `--fake-update <ver>`, `--fake-pawnio <state>`, `--timing`, `--bench <file>`, `--dump <file>`, `--font "<name>"`, `--minimized`, `--no-elevate`, `--updated` (used internally after a self-update).
 - **Release build:**
   ```powershell
   dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:PublishReadyToRun=true -o publish
@@ -77,6 +77,82 @@ A full audit (architecture, leaks, RAM, threads) drove three rounds of changes. 
 - `dotnet build` 0 errors / 0 warnings after every step.
 - `--render` smoke test: 32 PNGs (en+es, all pages, 6 overlay captures, colors), clean exit, zero new `errors.log` entries.
 - Real-run dialog verification: launch, `PostMessage WM_CLOSE` to the main window (largest window of the PID), capture the new dialog HWND with a DPI-aware GDI+ utility, then pixel-classify the capture against the app palette (bottom/right rows must be `#111111`, not `#202023`; accent button ring at its edges). The two console utilities used (`imgan` pixel classifier, `shot` window capturer) were throwaway builds in `%TEMP%\opencode\` — recreate if needed.
+
+---
+
+## DONE 2026-11-27 (0.1.7, test build, not published)
+
+- **Generic CPU core recognition, so values no longer depend on exact sensor names.**
+  - **Bug report:** a second friend with an **Intel Core i9-13900KF** (hybrid, 8 P-cores + 16 E-cores) had temperature but no clock. LHM names hybrid clocks `P-Core #N` / `E-Core #N`, which matched neither `CPU Core #N` (classic Intel) nor `Core #N` (AMD). Temperature worked through `Core Max`.
+  - **One anchored pattern** (`CoreName`): `^(?:CPU\s+)?(?:(P|E)-)?Core #N(?:\s+Thread #M)?$`, case-insensitive. Derived sensors such as `(Effective)`, `VID` and `(SMU)` don't match because the pattern is anchored. The key is kind (plain, P or E) × 1000 + N. Display order: P first, then plain, then E.
+  - **`PlanCores`** (static and testable) decides the physical cores and where each load goes:
+    1. The load key equals a clock/temperature key (or an alias of one) → direct.
+    2. Same count → by position.
+    3. Twice as many loads → in pairs (AMD SMT).
+    4. Weighted P=2 / E=1 threads → sequential (hybrid with per-thread loads).
+    5. Otherwise each load key becomes its own core.
+  - **Hybrid aliasing:** if there are as many plain keys as typed P/E keys (for example temperatures named `CPU Core #N` while clocks are P/E), the plain keys are aliased by position.
+  - **Labels:** hybrid cores show as `Core P1`…`Core E16` (`CoreReading.Label`); others keep `Core N`.
+- **FPS for Vulkan/OpenGL (DxgKrnl fallback)**, from an owner report that Minecraft with Vulkan showed no FPS.
+  - `FpsMonitor` also enables `Microsoft-Windows-DxgKrnl` `{802EC45A-1E99-4B83-9920-87C98277BA9D}` with the `Present` keyword `0x8000000` only; the manifest was confirmed on the owner's PC with `wevtutil gp`.
+  - It records per (pid, type) the events Blit 166, Flip 168, FlipMPO 252, PresentHistory_Start 171 and PresentHistoryDetailed_Start 215, skipping pid ≤ 4.
+  - **Per candidate pid:** use DXGI/D3D9 when available (more precise). Otherwise use the kernel type with the MOST events in the 1 s window, never the sum, because one frame can emit several types.
+  - Pruning and hold logic are shared (`Window`, `Prune`). If enabling DxgKrnl fails, DirectX keeps working.
+  - **Dev flag `--fps-probe <file>`** (needs admin): listens for 5 s and writes the foreground pid plus per-process rates for each source.
+  - **Verified on the owner's Minecraft (Vulkan) with `--fps-probe`:** `javaw` emits `Blit 327/s` + `PresentHistoryDetailed 327/s`, one of each per frame, and FPS now shows in game. HwPulse read 246 while NVIDIA's overlay read 219 at the same moment, and Minecraft's own F3 is within a few FPS of HwPulse.
+    - Why NVIDIA differs: Minecraft Vulkan presents in **Blit** mode, so DWM composites at the monitor rate and drops extra frames. HwPulse counts frames the game submits (= F3), while NVIDIA's overlay counts closer to displayed frames. This is expected, not a bug.
+  - **PresentHistory (171) fires TWICE per frame:** the probe showed Discord at `PresentHistory 44.5/s` vs `PresentHistoryDetailed 22.5/s` = DXGI 22.5/s. So the kernel type is chosen by fixed priority (`KernelPriority`: Flip, FlipMPO, PresentHistoryDetailed, Blit, then PresentHistory), not by highest count. PresentHistory is used only as a last resort, keeping every other timestamp.
+- **Editor round 2 (owner feedback):**
+  - **Header alignment:** rows have 6 px padding and the list ScrollViewer's bar steals width only from the rows, so `ElementsScroll_ScrollChanged` sets the header margin to 6 (row padding) + 6 (panel margin) + the visible scrollbar width. "Colors" and "Extras" headers span two columns.
+  - **Animated drag reorder:** replaces Windows DragDrop, which shows no movement. Mouse capture on the ≡ handle; the dragged row gets a shadow, a SurfaceAlt background and z-index, and follows the cursor (TranslateTransform, clamped). The other rows slide out of the way with 140 ms ease-out animations; drop commits the reorder. Verified with real mouse input: mid-drag frame captured, and the saved order changed (fps moved from index 0 to 2).
+  - **Sliders, all of them, app-wide:** `Controls/SliderDragFix.cs` registers a class handler. A click on the track (not the thumb) sets the value at the point, runs `UpdateLayout`, then raises MouseLeftButtonDown on the Thumb, so the same gesture keeps dragging. **Not verified with real input:** an automated test sent clicks to the owner's desktop because the editor wasn't foreground, so automated mouse tests on the owner's PC were stopped. The owner must test this by hand.
+  - **Positions:** the `OverlayCorner` enum gained `BottomCenter` and `Custom` (appended, so saved values are unchanged). Settings shows a 3×2 grid (top L/C/R, bottom L/C/R). The hotkey cycles TL→TC→TR→BR→BC→BL. `Custom` uses `AppSettings.OverlayX/OverlayY` (fractions of the screen, clamped on screen); Settings shows "Custom position" when it's active.
+  - **New editor features:**
+    - **Mini graph per element** (`OverlayElement.Graph`, keys listed in `OverlayLayout.Series`: fps, cpuLoad, cpuTemp, cpuClock, gpuLoad, gpuTemp, ram) uses SparkChart bound to the VM series. In column layout the graph replaces the bar. The series were added to `OverlayProps` for tray mode.
+    - **Undo/redo:** a JSON-snapshot history of up to 100 steps; changes within 600 ms are merged into one step (slider drags, typing). Buttons use Segoe MDL2 icons; Ctrl+Z / Ctrl+Y work except while a TextBox has focus.
+    - **"Only show while playing"** (`AppSettings.OverlayOnlyInGame`, toggle in the editor's Behavior section, applies to every style): the overlay gets Opacity 0 and skips rendering when `FpsActive` is false, with FpsMonitor's 2.5 s hold. While this option is on, the FPS ETW session is kept on even if the overlay shows no FPS item.
+    - **"Move with the mouse"** (editor toggle, `OverlayWindow.SetMoveMode`): removes WS_EX_TRANSPARENT, shows a translucent blue highlight and a SizeAll cursor, and `DragMove()` saves a Custom position. It turns off when toggled off or when the editor closes.
+      - **Gotcha:** the editor opens with `ShowDialog()`, which disables every other window of the app, overlay included. `SetMoveMode(true)` therefore also calls `Native.EnableWindow(hwnd, true)`; without it the overlay never got the click. That was the bug the owner reported.
+      - **Verified without moving the mouse:** the DEBUG flag `--move-mode` (together with `--editor`) turns the mode on after 4 s, and an external check read the overlay as enabled=True and WS_EX_TRANSPARENT=False.
+      - **Lesson:** never run synthetic mouse tests on the owner's PC. They hit the real desktop when the target window isn't in front.
+- **Web dashboard "keep screen on" toggle** (sun icon in the header, remembered in localStorage `hwpAwake`, on by default): it uses the Wake Lock API when the page is a secure context (localhost or https). Otherwise, for example a phone on `http://192.168.x.x` where the API doesn't exist, it falls back to a muted 2×2 `<video>` playing a `canvas.captureStream(1)` that redraws every second. It re-acquires on `visibilitychange` and on the first tap. Buttons use `-webkit-tap-highlight-color: transparent` (the owner saw a borderless box flash on tap) and a focus-visible outline instead of the default focus box. Verified in the built-in browser: toggling works, no console errors, and the fallback video plays. **Not verified on real phones**; the fallback is best-effort, and iOS may still sleep over plain http.
+- **Fully customizable overlay (visual editor)**, requested by the owner, who chose the "visual editor" option.
+  - **New overlay style "Custom"** (`AppSettings.OverlayStyle = "custom"`), alongside Panel and Single line. It's selectable in Settings → Overlay; in Custom, the "Customize colors" button and the "Show in overlay" checkboxes are replaced by **"Edit design…"**.
+  - **Model `Core/OverlayLayout.cs`** (stored in `AppSettings.OverlayLayout`):
+    - **Global:** Arrangement (one line / column / grid with N columns), Font (whitelist), background color and opacity, border color, opacity and width, corner radius, X/Y padding, spacing, separator text and color.
+    - **Per element:** Key, Visible, Label, ValueColor ("auto" = dynamic temperature/FPS colors, or #RRGGBB), LabelColor, Size, Bold, Bar (only for % keys).
+    - **Catalog:** fps, frametime, cpuLoad/Temp/Clock/Power, gpuLoad/Temp/Clock/Power, vram, ram, power (total), time. New VM property `ClockTimeText`; the extra properties were added to `OverlayProps` so tray mode keeps them updated.
+    - **Presets:** line (classic), minimal, vertical (column with bars), bigfps, grid.
+    - **Validation:** `Normalize()` clamps every number, whitelists the font and keys, accepts only #RRGGBB colors, and limits label and separator text. It runs on load and on import, because an elevated process reads files that others may share.
+  - **`Views/OverlayCustomBuilder.cs`** builds the visual tree from the layout. It binds to the same VM properties, so values update every second; scale multiplies sizes (no transform), and the shared-size column aligns labels in vertical mode. `OverlayWindow` has a `CustomHost` ContentControl; `RebuildCustom()` runs on layout or scale changes (from `ApplyScale`), and the 2× supersampled rendering pipeline is unchanged.
+  - **`Views/OverlayEditorWindow`:**
+    - Left side: live preview over a "game-like" gradient, plus global style controls.
+    - Right side: the element list. Each row has drag ≡ or ▲▼ to reorder, a visible switch, the label text, value and label color swatches, size, a Bold toggle and a Bar toggle.
+    - Header: Presets menu, Import… / Export… (.json, import limited to 64 KB plus `Normalize`) and Done.
+    - Every edit applies live to both the preview and the real overlay (`MainViewModel.SetCustomLayout` → `OverlayLayoutChanged` → rebuild + save).
+  - **`Views/ColorPickDialog`:** a reusable picker (16 quick colors, HEX, HSL sliders, optional "Automatic"). It previews live and Cancel reverts.
+  - **Dev:**
+    - `--render` now also writes `overlay-custom-<preset>.png` (the window image) and `overlay-editor.png`, then restores the user's style and layout.
+    - `--editor` (DEBUG only) opens the editor at startup.
+    - Note: `--render` window captures via RenderTargetBitmap can show some text faint; the live window was verified with a real screenshot.
+  - **Not done / ideas:** drag the overlay position freely (corners only today), a per-element mini graph (sparkline), per-element custom formats and units.
+- **Windows built-in fallbacks (`Monitoring/NativeSensors.cs`)** need no driver and no admin, and never touch games. They are used only when LHM gives no value (PawnIO blocked by an anti-cheat, no admin, unsupported hardware).
+  - **CPU clock:** PerformanceCounter "Processor Information(_Total)" `% Processor Performance` × `Processor Frequency`, the same source as Task Manager. It's the last step of the `CpuClockAvg` chain. Verified non-admin on the owner's PC: 4195 MHz, where LHM gives nothing without admin.
+  - **GPU temperature / fan / power %** for any vendor (WDDM 2.4+): `D3DKMTEnumAdapters2` → `D3DKMTQueryAdapterInfo` with `KMTQAITYPE_ADAPTERREGISTRYINFO` (8, for the adapter name) and `KMTQAITYPE_ADAPTERPERFDATA` (**62**, value confirmed empirically). The struct is `D3DKMT_ADAPTER_PERFDATA` (Temperature in 0.1 °C, Power in 0.1 % of max, FanRPM). Zero means "not implemented".
+    - The adapter is matched by name to the LHM GPU, and its values fill `GpuTemp` / `GpuFanRpm` / the new `Snapshot.GpuPowerPct` when LHM lacks them. The UI shows power as "NN %" when there are no watts.
+    - Verified on the owner's GTX 1660 Ti: 54.1 °C, matching LHM. That laptop driver reports no fan or power.
+  - **Dev flag `--native-probe <file>`** prints what these sources return. `--dump` also prints a "Windows counters" line.
+  - **Not considered and rejected:** the ACPI Thermal Zone counter (system or motherboard temperature, not the CPU), HWiNFO shared memory / AIDA64 (not free or time-limited), and RTSS-style injection (anti-cheat risk).
+- **Researched next step:** LibreHardwareMonitor **0.9.7 previews** on NuGet (`0.9.7-pre785`) carry 147 commits since 0.9.6: Intel Panther Lake and Arrow Lake-U, AMD Fire Range, Zen 5 CCD temperatures, a Zen temperature-offset fix, RAM temperatures, NVIDIA hotspot, NVIDIA driver-restart and NVML fixes, NVMe temperature fixes, and many motherboard EC/Super I/O additions. Test it with friends' `--dump` output before switching, or wait for 0.9.7 stable.
+- **Generic fallbacks:**
+  - `CpuClockAvg`: per-core average → `Cores (Average)` → `AvgCpuClock`, which averages every CPU clock except Bus, Effective, Average, Ring, Uncore, Memory, Fabric and Graphics.
+  - `CpuPower` falls back to the first Power sensor containing "package".
+  - `CpuVoltage` falls back to the first Voltage sensor containing "core".
+  - Temperature keeps the earlier chain ending in `MaxCpuTemp`.
+- **UI:** the per-core list now has its own scroll (`MaxHeight=192`, 8 rows), so a 24-core i9 doesn't stretch the CPU page.
+- **Dev flag `--selftest-cpu <file>`:** runs `PlanCores` on the real LHM name sets of the i5-10300H, Ryzen 5 5500 and three hybrid naming variants. Result: 4, 6 and 24 cores with correct thread counts (P:2, E:1) and no unmapped loads.
+- **Settings fit:** a pre-existing 3 px overflow appeared because the Web dashboard text now wraps to 3 lines; it reproduced without these changes. Fixed by shrinking the overlay slider rows from 34 to 30 px and the QR top margin from 12 to 8 px. Settings is now 626/631 in both languages.
+- **Verified:** build 0 warnings; render shows every page OK; the owner's Intel is unchanged (4 cores). **The i9 itself is not verified yet:** wait for the friend's confirmation and, if anything is off, ask for their `--dump`.
 
 ---
 
@@ -221,7 +297,7 @@ A full audit (architecture, leaks, RAM, threads) drove three rounds of changes. 
 - Test a real self-update (open 0.1.2: the notice should offer 0.1.3; "Update now" should replace the exe and restart).
 - Test in a real game: FPS stability (sliding-window logic is new-ish), "Start with Windows" in the elevated Release build, a real self-update.
 - Code signing (removes Defender/SmartScreen warnings; the owner must do the submission).
-- Vulkan/OpenGL games report no FPS (only DXGI/D3D9 present events are captured).
+- Vulkan/OpenGL FPS: DxgKrnl fallback added in 0.1.7; confirm with `--fps-probe` in a Vulkan game.
 
 ## Gotchas for the next AI (hard-won, don't relearn these)
 1. **Never `InvariantGlobalization` in a WPF app.** Bindings resolve `xml:lang` to a concrete culture at layout time; without ICU every formatting binding throws `XamlParseException` inside `Window.Show()`, `ErrorLog` swallows it (`e.Handled = true`), and you get a **process alive with no window**. Check `%AppData%\HwPulse\errors.log` first when "the app doesn't open".

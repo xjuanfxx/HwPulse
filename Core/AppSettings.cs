@@ -4,7 +4,8 @@ using System.Text.Json;
 namespace HwPulse;
 
 // Los valores numéricos se guardan en settings.json: los nuevos van al final para no cambiar los existentes.
-public enum OverlayCorner { TopLeft, TopRight, BottomRight, BottomLeft, TopCenter }
+/// <summary>Posición del overlay. Los valores nuevos van al final para no cambiar lo ya guardado.</summary>
+public enum OverlayCorner { TopLeft, TopRight, BottomRight, BottomLeft, TopCenter, BottomCenter, Custom }
 
 public sealed class AppSettings
 {
@@ -17,9 +18,17 @@ public sealed class AppSettings
     public OverlayCorner Corner { get; set; } = OverlayCorner.TopCenter;
     public double OverlayOpacity { get; set; } = 0.6;
     public double OverlayScale { get; set; } = 1.0;
+    /// <summary>Posición libre (Corner = Custom): esquina superior izquierda en fracción de la pantalla (0–1).</summary>
+    /// <summary>El overlay solo se ve mientras hay un juego dibujando (FPS detectados).</summary>
+    public bool OverlayOnlyInGame { get; set; }
+    public double OverlayX { get; set; } = 0.02;
+    public double OverlayY { get; set; } = 0.02;
     public bool TrayNoticeShown { get; set; }
     public string Language { get; set; } = "en";
     public string OverlayStyle { get; set; } = "compact";
+
+    /// <summary>Diseño del overlay en el estilo "custom" (editor visual). null = el preset de una línea.</summary>
+    public OverlayLayout? OverlayLayout { get; set; }
     public int ChartRange { get; set; } = 300;
 
     /// <summary>Colores del overlay elegidos por el usuario ("#RRGGBB"); lo que falte usa <see cref="DefaultOverlayColors"/>.</summary>
@@ -102,9 +111,12 @@ public sealed class AppSettings
         if (s.WebPort is < 1024 or > 65535) s.WebPort = 8086;
         s.OverlayOpacity = double.IsFinite(s.OverlayOpacity) ? Math.Clamp(s.OverlayOpacity, 0, 1) : 0.6;
         s.OverlayScale = double.IsFinite(s.OverlayScale) ? Math.Clamp(s.OverlayScale, 0.7, 2) : 1.0;
+        s.OverlayX = double.IsFinite(s.OverlayX) ? Math.Clamp(s.OverlayX, 0, 1) : 0.02;
+        s.OverlayY = double.IsFinite(s.OverlayY) ? Math.Clamp(s.OverlayY, 0, 1) : 0.02;
         if (s.ChartRange is not (60 or 300 or 600)) s.ChartRange = 300;
         if (s.Language is not ("en" or "es")) s.Language = "en";
-        if (s.OverlayStyle is not ("panel" or "compact")) s.OverlayStyle = "compact";
+        if (s.OverlayStyle is not ("panel" or "compact" or "custom")) s.OverlayStyle = "compact";
+        s.OverlayLayout?.Normalize();
         if (s.CloseAction is not ("ask" or "tray" or "exit")) s.CloseAction = "ask";
         if (!Enum.IsDefined(s.Corner)) s.Corner = OverlayCorner.TopCenter;
         s.OverlayItems = (s.OverlayItems ?? new()).Where(OverlayItemKeys.Contains).Distinct().ToList();

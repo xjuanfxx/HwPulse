@@ -265,18 +265,48 @@ public sealed partial class MainViewModel
     public Visibility NoNetVisibility => NetRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
 
     // ---------------------------------------------------------------- Estilo del overlay
-    public bool OverlayPanel { get => _settings.OverlayStyle != "compact"; set { if (value) SetOverlayStyle("panel"); } }
+    public bool OverlayPanel { get => _settings.OverlayStyle == "panel"; set { if (value) SetOverlayStyle("panel"); } }
     public bool OverlayCompact { get => _settings.OverlayStyle == "compact"; set { if (value) SetOverlayStyle("compact"); } }
+    public bool OverlayCustom { get => _settings.OverlayStyle == "custom"; set { if (value) SetOverlayStyle("custom"); } }
     public Visibility OverlayPanelVisibility => OverlayPanel ? Visibility.Visible : Visibility.Collapsed;
     public Visibility OverlayCompactVisibility => OverlayCompact ? Visibility.Visible : Visibility.Collapsed;
+    public Visibility OverlayCustomVisibility => OverlayCustom ? Visibility.Visible : Visibility.Collapsed;
+    /// <summary>En el estilo personalizado las casillas "Mostrar en el overlay" no aplican (lo decide el editor).</summary>
+    public Visibility OverlayItemsVisibility => OverlayCustom ? Visibility.Collapsed : Visibility.Visible;
 
     private void SetOverlayStyle(string style)
     {
         _settings.OverlayStyle = style;
-        Raise(nameof(OverlayPanel)); Raise(nameof(OverlayCompact));
-        Raise(nameof(OverlayPanelVisibility)); Raise(nameof(OverlayCompactVisibility));
+        if (style == "custom") _settings.OverlayLayout ??= HwPulse.OverlayLayout.Preset("line");
+        Raise(nameof(OverlayPanel)); Raise(nameof(OverlayCompact)); Raise(nameof(OverlayCustom));
+        Raise(nameof(OverlayPanelVisibility)); Raise(nameof(OverlayCompactVisibility)); Raise(nameof(OverlayCustomVisibility));
+        Raise(nameof(OverlayItemsVisibility)); Raise(nameof(OverlayHasFps));
         OverlayLayoutChanged?.Invoke();
     }
+
+    /// <summary>Diseño del overlay personalizado (se crea con el preset de una línea la primera vez).</summary>
+    public OverlayLayout CustomLayout => _settings.OverlayLayout ??= HwPulse.OverlayLayout.Preset("line");
+
+    /// <summary>El editor cambió el diseño: se reconstruye el overlay y se guarda.</summary>
+    public void SetCustomLayout(OverlayLayout layout)
+    {
+        _settings.OverlayLayout = layout;
+        Raise(nameof(OverlayHasFps));
+        OverlayLayoutChanged?.Invoke();
+    }
+
+    /// <summary>Hay un juego dibujando ahora mismo (FPS detectados).</summary>
+    public bool FpsActive { get; private set; }
+
+    /// <summary>"Mostrar solo mientras juego": el overlay se oculta cuando no se detectan FPS.</summary>
+    public bool OverlayOnlyInGame
+    {
+        get => _settings.OverlayOnlyInGame;
+        set { if (value == _settings.OverlayOnlyInGame) return; _settings.OverlayOnlyInGame = value; Raise(); OverlayLayoutChanged?.Invoke(); }
+    }
+
+    /// <summary>Hora actual para el overlay ("time").</summary>
+    public string ClockTimeText => DateTime.Now.ToString("HH:mm");
 
     // Valores numéricos para las barras del overlay
     public double CpuLoadPct { get; private set; }
@@ -317,6 +347,7 @@ public sealed partial class MainViewModel
         FrametimeText = s.FrametimeMs is double ft ? $"{ft:F1} ms" : "–";
         FpsSource = s.FpsProcess ?? Loc.T(IsAdmin ? "NoGame" : "FpsNeedsAdmin");
         FpsSeries = s.Fps is null ? null : _fpsChart.Snapshot(_fpsHist);
+        FpsActive = s.Fps is not null;
 
         // Tarjetas
         CpuCardSub = JoinDot(s.CpuTempMax is double t ? Fmt.Temp(t) : null, s.CpuClockAvg is double c ? Fmt.Ghz(c) : null);

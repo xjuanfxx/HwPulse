@@ -8,13 +8,32 @@ namespace HwPulse;
 /// FPS y frametime del juego en primer plano, leyendo los eventos "Present" que Windows publica por ETW
 /// (la misma fuente que usan PresentMon, CapFrameX o FrameView). Solo escucha: no se inyecta en el juego,
 /// así que no interfiere con los anti-cheat. Requiere administrador.
-/// Cubre DirectX 9–12 (DXGI y D3D9). Juegos Vulkan/OpenGL puros no publican estos eventos.
+/// Fuente principal: DirectX 9–12 (eventos de DXGI y D3D9, los más precisos). Respaldo: los eventos de
+/// presentación del kernel gráfico de Windows (DxgKrnl), por los que pasa cualquier API, así que también
+/// cubren Vulkan y OpenGL (Minecraft con Vulkan, emuladores, juegos con DXVK…).
 /// </summary>
 public sealed class FpsMonitor : IDisposable
 {
     private static readonly Guid Dxgi = new("CA11C036-0102-4A2D-A6AD-F03CFED5D3C9");
     private static readonly Guid D3D9 = new("783ACA0A-790E-4D7F-8451-AA850511C6B9");
     private const int DxgiPresentStart = 42, DxgiPresentMpoStart = 55, D3D9PresentStart = 1;
+
+    // Microsoft-Windows-DxgKrnl, palabra clave "Present" (0x8000000). Eventos que el kernel emite en el
+    // contexto del proceso que presenta, uno por fotograma según el modo de presentación:
+    // Blit (166), Flip (168), FlipMultiPlaneOverlay (252), PresentHistory_Start (171) y
+    // PresentHistoryDetailed_Start (215). Un mismo fotograma produce más de uno (Minecraft con Vulkan, en
+    // modo Blit: un Blit + un PresentHistoryDetailed por fotograma), así que se cuentan por separado y se
+    // usa UN tipo, nunca la suma. Medido con --fps-probe: PresentHistory (171) sale DOS veces por fotograma
+    // (Discord: 44.5/s frente a 22.5/s de DXGI), así que no se puede elegir "el que más eventos tenga":
+    // se elige por prioridad y PresentHistory queda como último recurso, a mitad de su cuenta.
+    private static readonly Guid DxgKrnl = new("802EC45A-1E99-4B83-9920-87C98277BA9D");
+    private const ulong DxgKrnlPresentKeyword = 0x8000000;
+    private static readonly int[] KernelPresentIds = { 166, 168, 252, 171, 215 };
+    // Orden de preferencia (índices de KernelPresentIds): Flip y FlipMPO (pantalla completa), luego
+    // PresentHistoryDetailed (ventana), luego Blit, y por último PresentHistory (doble por fotograma).
+    private static readonly int[] KernelPriority = { 1, 2, 4, 0, 3 };
+    private const int PresentHistoryType = 3;
+    private readonly Dictionary<long, List<double>> _kernelPresents = new(); // clave: pid * 8 + tipo
 
     private readonly TraceEventSession _session;
     private readonly object _lock = new();
@@ -36,6 +55,8 @@ public sealed class FpsMonitor : IDisposable
         _session = new TraceEventSession("HwPulse-FPS") { StopOnDispose = true };
         _session.EnableProvider(Dxgi, TraceEventLevel.Verbose);
         _session.EnableProvider(D3D9, TraceEventLevel.Verbose);
+        // Respaldo para Vulkan/OpenGL. Si este proveedor no se puede activar, DirectX sigue funcionando.
+        try { _session.EnableProvider(DxgKrnl, TraceEventLevel.Verbose, DxgKrnlPresentKeyword); } catch { }
         // Kernel-Network no se activa aquí: capturaría cada envío y recepción TCP/UDP de todo el sistema,
         // mientras la app esté abierta. Se enciende bajo demanda con SetNetworkEnabled (página de Red).
         _session.Source.AllEvents += OnEvent;
@@ -127,6 +148,20 @@ public sealed class FpsMonitor : IDisposable
     private void OnEvent(TraceEvent e)
     {
         int id = (int)e.ID;
+        if (e.ProviderGuid == DxgKrnl)
+        {
+            int type = Array.IndexOf(KernelPresentIds, id);
+            if (type < 0 || e.ProcessID <= 4) return; // System/Idle no son juegos
+            lock (_lock)
+            {
+                long key = (long)e.ProcessID * 8 + type;
+                if (!_kernelPresents.TryGetValue(key, out var kl)) _kernelPresents[key] = kl = new List<double>(512);
+                double kts = e.TimeStampRelativeMSec;
+                kl.Add(kts);
+                if (kts > _latestTs) _latestTs = kts;
+            }
+            return;
+        }
         bool present = (e.ProviderGuid == Dxgi && (id == DxgiPresentStart || id == DxgiPresentMpoStart))
                        || (e.ProviderGuid == D3D9 && id == D3D9PresentStart);
         if (!present) return;
@@ -157,22 +192,25 @@ public sealed class FpsMonitor : IDisposable
         {
             // Descarta lo viejo de todos los procesos para no acumular memoria.
             double cut = _latestTs - KeepMs;
-            foreach (var key in _presents.Keys.ToList())
-            {
-                var l = _presents[key];
-                int old = 0;
-                while (old < l.Count && l[old] < cut) old++;
-                if (old > 0) l.RemoveRange(0, old);
-                if (l.Count == 0) _presents.Remove(key);
-            }
+            Prune(_presents, cut);
+            Prune(_kernelPresents, cut);
             // El juego en primer plano; si ahora mismo no presenta (una notificación, la superposición de
             // Steam/Epic con el foco), se sigue con el último juego medido mientras siga dibujando.
+            // Primero DirectX (preciso); si ese proceso no publica eventos de DirectX, el kernel (Vulkan/OpenGL).
             foreach (int cand in new[] { fgPid, _gamePid })
             {
-                if (cand == 0 || !_presents.TryGetValue(cand, out var l)) continue;
-                double from = l[^1] - WindowMs;
-                int i = l.FindIndex(t => t >= from);
-                if (l.Count - i >= 3 && l[^1] >= _latestTs - KeepMs) { win = l.GetRange(i, l.Count - i).ToArray(); pid = cand; break; }
+                if (cand == 0) continue;
+                if (_presents.TryGetValue(cand, out var l) && Window(l) is { } w) { win = w; pid = cand; break; }
+                double[]? best = null;
+                foreach (int type in KernelPriority)
+                {
+                    if (!_kernelPresents.TryGetValue((long)cand * 8 + type, out var kl) || Window(kl) is not { } kw) continue;
+                    // PresentHistory llega dos veces por fotograma: un evento de cada dos.
+                    best = type == PresentHistoryType ? kw.Where((_, i) => i % 2 == 0).ToArray() : kw;
+                    if (best.Length >= 3) break;
+                    best = null;
+                }
+                if (best != null) { win = best; pid = cand; break; }
             }
         }
 
@@ -192,6 +230,50 @@ public sealed class FpsMonitor : IDisposable
         if (_gamePid != 0 && DateTime.UtcNow - _lastAt < HoldFor) return _last;
         _gamePid = 0;
         return (null, null, null);
+    }
+
+    /// <summary>Marcas del último segundo de la lista (al menos 3 y recientes), o null.</summary>
+    private double[]? Window(List<double> l)
+    {
+        if (l.Count < 3 || l[^1] < _latestTs - KeepMs) return null;
+        double from = l[^1] - WindowMs;
+        int i = l.FindIndex(t => t >= from);
+        return l.Count - i >= 3 ? l.GetRange(i, l.Count - i).ToArray() : null;
+    }
+
+    private static void Prune<TKey>(Dictionary<TKey, List<double>> map, double cut) where TKey : notnull
+    {
+        List<TKey>? empty = null;
+        foreach (var (key, l) in map)
+        {
+            int old = 0;
+            while (old < l.Count && l[old] < cut) old++;
+            if (old > 0) l.RemoveRange(0, old);
+            if (l.Count == 0) (empty ??= new()).Add(key);
+        }
+        if (empty != null) foreach (var k in empty) map.Remove(k);
+    }
+
+    /// <summary>--fps-probe: eventos por segundo de cada fuente y proceso en los últimos 2 s (diagnóstico).</summary>
+    public string DescribeRates()
+    {
+        var sb = new System.Text.StringBuilder();
+        string[] kernelNames = { "Blit", "Flip", "FlipMPO", "PresentHistory", "PresentHistoryDetailed" };
+        lock (_lock)
+        {
+            double from = _latestTs - 2000;
+            var pids = _presents.Keys.Concat(_kernelPresents.Keys.Select(k => (int)(k / 8))).Distinct();
+            foreach (int pid in pids)
+            {
+                var parts = new List<string>();
+                if (_presents.TryGetValue(pid, out var l)) parts.Add($"DXGI/D3D9 {l.Count(t => t >= from) / 2.0:0.#}/s");
+                for (int type = 0; type < KernelPresentIds.Length; type++)
+                    if (_kernelPresents.TryGetValue((long)pid * 8 + type, out var kl))
+                        parts.Add($"{kernelNames[type]} {kl.Count(t => t >= from) / 2.0:0.#}/s");
+                sb.AppendLine($"{pid,6} {NameOf(pid) ?? "?",-28} {string.Join(", ", parts)}");
+            }
+        }
+        return sb.Length == 0 ? "no present events captured" + Environment.NewLine : sb.ToString();
     }
 
     private string? NameOf(int pid)

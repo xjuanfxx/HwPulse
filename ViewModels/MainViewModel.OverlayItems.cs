@@ -49,7 +49,9 @@ public sealed partial class MainViewModel
     // Grupos
     private bool FpsG => On("fps") || On("frametime");
     /// <summary>El overlay tiene marcado FPS o frametime: puede hacer falta la sesión ETW de FPS.</summary>
-    public bool OverlayHasFps => FpsG;
+    public bool OverlayHasFps => _settings.OverlayStyle == "custom"
+        ? (_settings.OverlayLayout?.Elements.Any(e => e.Visible && e.Key is "fps" or "frametime") ?? false)
+        : FpsG;
     private bool CpuG => On("cpuLoad") || On("cpuTemp") || On("cpuClock");
     private bool GpuG => On("gpuLoad") || On("gpuTemp");
     private bool VramG => On("vram");

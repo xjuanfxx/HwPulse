@@ -175,7 +175,10 @@
             </StackPanel>
         </Border>
 
-        <!-- Aviso de throttling (ambos estilos) -->
+        <!-- ===== Estilo personalizado: lo construye OverlayCustomBuilder desde el diseño del editor ===== -->
+        <ContentControl x:Name="CustomHost" Visibility="{Binding OverlayCustomVisibility}" HorizontalAlignment="Left" VerticalAlignment="Top"/>
+
+        <!-- Aviso de throttling (todos los estilos) -->
         <Border Background="#C9463E" CornerRadius="3" Padding="5,1" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,-6,8,0"
                 Visibility="{Binding ThrottleVisibility}">
             <TextBlock Text="THROTTLE" FontSize="9" FontWeight="Bold" Foreground="White"/>

@@ -110,6 +110,8 @@ public partial class MainWindow : Window
 
     private void Colors_Click(object sender, RoutedEventArgs e) => CurrentApp.OpenColors();
 
+    private void EditOverlay_Click(object sender, RoutedEventArgs e) => CurrentApp.OpenOverlayEditor();
+
     private void OpenWeb_Click(object sender, RoutedEventArgs e) => CurrentApp.OpenWeb();
 
     private void Update_Click(object sender, RoutedEventArgs e) => CurrentApp.UpdateClicked();

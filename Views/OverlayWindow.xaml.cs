@@ -82,7 +82,45 @@ public partial class OverlayWindow : Window
     {
         _renderQueued = false;
         if (!IsVisible) return;
+        // "Solo mientras juego": sin FPS detectados el overlay queda invisible (y no se dibuja: cero coste).
+        // En modo mover se ve siempre, para poder colocarlo.
+        bool hide = _settings.OverlayOnlyInGame && !_moveMode && DataContext is MainViewModel { FpsActive: false };
+        Opacity = hide ? 0 : 1;
+        if (hide) return;
         RenderCore();
+    }
+
+    // ------------------------------------------------------------------ mover con el ratón
+    private bool _moveMode;
+    private static readonly Brush MoveHighlight = CreateMoveHighlight();
+    private static Brush CreateMoveHighlight() { var b = new SolidColorBrush(Color.FromArgb(0x40, 0x5B, 0x9B, 0xD5)); b.Freeze(); return b; }
+
+    /// <summary>
+    /// Activa/desactiva el modo de colocación: el overlay deja de ignorar los clics (quita WS_EX_TRANSPARENT),
+    /// se resalta y se puede arrastrar. Al soltar se guarda la posición libre en fracción de la pantalla.
+    /// </summary>
+    public void SetMoveMode(bool on)
+    {
+        if (_moveMode == on || _hwnd == IntPtr.Zero) return;
+        _moveMode = on;
+        int ex = Native.GetWindowLong(_hwnd, Native.GWL_EXSTYLE);
+        Native.SetWindowLong(_hwnd, Native.GWL_EXSTYLE, on ? ex & ~Native.WS_EX_TRANSPARENT : ex | Native.WS_EX_TRANSPARENT);
+        // El editor se abre como ventana modal y WPF deshabilita el resto de ventanas de la app mientras tanto
+        // (el overlay incluido): sin esto no recibiría el clic para arrastrarlo. Al cerrar el editor, WPF las
+        // vuelve a habilitar; y el overlay deja pasar los clics igualmente (WS_EX_TRANSPARENT).
+        if (on) Native.EnableWindow(_hwnd, true);
+        Background = on ? MoveHighlight : Brushes.Transparent;
+        Cursor = on ? System.Windows.Input.Cursors.SizeAll : null;
+        QueueRender();
+    }
+
+    protected override void OnMouseLeftButtonDown(System.Windows.Input.MouseButtonEventArgs e)
+    {
+        base.OnMouseLeftButtonDown(e);
+        if (!_moveMode) return;
+        try { DragMove(); } catch (InvalidOperationException) { return; }
+        double sw = SystemParameters.PrimaryScreenWidth, sh = SystemParameters.PrimaryScreenHeight;
+        if (DataContext is MainViewModel vm && sw > 0 && sh > 0) vm.SetCustomPosition(Left / sw, Top / sh);
     }
 
     /// <summary>Solo para las capturas de desarrollo (--render): mide y dibuja el contenido desmontado
@@ -174,10 +212,21 @@ public partial class OverlayWindow : Window
 
     public void ApplyScale(double scale)
     {
-        if (scale == _appliedScale) return;
-        _appliedScale = scale;
-        foreach (var a in _scalers) a(scale);
+        if (scale != _appliedScale)
+        {
+            _appliedScale = scale;
+            foreach (var a in _scalers) a(scale);
+        }
+        RebuildCustom();
         if (_source != null) QueueRender();
+    }
+
+    /// <summary>Reconstruye el overlay personalizado (diseño o tamaño cambiado). Solo si ese estilo está activo.</summary>
+    public void RebuildCustom()
+    {
+        if (_settings.OverlayStyle != "custom") { CustomHost.Content = null; return; }
+        var layout = _settings.OverlayLayout ?? OverlayLayout.Preset("line");
+        CustomHost.Content = OverlayCustomBuilder.Build(layout, double.IsNaN(_appliedScale) ? 1 : _appliedScale);
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -205,6 +254,10 @@ public partial class OverlayWindow : Window
             OverlayCorner.TopLeft => (MarginPx, MarginPx),
             OverlayCorner.TopRight => (sw - w - MarginPx, MarginPx),
             OverlayCorner.BottomRight => (sw - w - MarginPx, sh - h - MarginPx),
+            OverlayCorner.BottomCenter => (Math.Round((sw - w) / 2), sh - h - MarginPx),
+            // Posición libre: guardada en fracción de pantalla y siempre dentro de ella (cambio de resolución)
+            OverlayCorner.Custom => (Math.Clamp(Math.Round(_settings.OverlayX * sw), 0, Math.Max(0, sw - w)),
+                                     Math.Clamp(Math.Round(_settings.OverlayY * sh), 0, Math.Max(0, sh - h))),
             _ => (MarginPx, sh - h - MarginPx),
         };
     }
