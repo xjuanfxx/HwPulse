@@ -22,6 +22,8 @@ jobs:
       TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # etiquetas e historial: para el enlace "Full Changelog" con la versión anterior
 
       - uses: actions/setup-dotnet@v6
         with:
@@ -61,14 +63,25 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $notes = @"
-          ## Install
-          1. Install the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) (x64).
-          2. Download ``HwPulse.exe`` and run it (it asks for administrator rights for the sensor driver and FPS capture).
-          ``HwPulse-$env:VERSION-win-x64.zip`` is the same app as a folder, in case your antivirus dislikes the single file.
+          # Notas de la versión: la sección "## [X.Y.Z]" de CHANGELOG.md (hasta la siguiente versión).
+          $changelog = Get-Content CHANGELOG.md -Raw -ErrorAction SilentlyContinue
+          $pattern = '(?ms)^## \[' + [regex]::Escape($env:VERSION) + '\][^\r\n]*\r?\n(.*?)(?=^## \[|\z)'
+          $section = if ($changelog -and $changelog -match $pattern) { $Matches[1].Trim() } else { "" }
+          if (-not $section) { Write-Host "::warning::CHANGELOG.md has no section for $env:VERSION; publishing install notes only." }
 
-          Already installed? HwPulse updates itself from Settings.
+          $install = @"
+          ## Install / Instalación
+          1. Install the [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/download/dotnet/10.0) (x64) · Instala el .NET 10 Desktop Runtime (x64).
+          2. Download ``HwPulse.exe`` and run it (it asks for administrator rights for the sensor driver and FPS capture) · Descarga ``HwPulse.exe`` y ábrelo (pide administrador para el driver de sensores y la captura de FPS).
+
+          ``HwPulse-$env:VERSION-win-x64.zip`` is the same app as a folder, in case your antivirus dislikes the single file · es la misma app en carpeta, por si tu antivirus desconfía del archivo único.
+
+          **Already installed? / ¿Ya la tienes?** HwPulse 0.1.3+ shows an update notice at the top of the window · HwPulse 0.1.3 o posterior muestra un aviso de actualización arriba de la ventana.
 
           SHA-256 ``HwPulse.exe``: ``$env:HASH``
           "@
-          gh release create $env:TAG dist/* --title "HwPulse $env:VERSION" --notes $notes --generate-notes --target $env:GITHUB_SHA
+          $prev = git tag --sort=-v:refname | Where-Object { $_ -ne $env:TAG } | Select-Object -First 1
+          $compare = if ($prev) { "`n`n**Full Changelog**: https://github.com/${{ github.repository }}/compare/$prev...$env:TAG" } else { "" }
+          $notes = if ($section) { "$section`n`n---`n`n$install$compare" } else { "$install$compare" }
+          $notes | Out-File notes.md -Encoding utf8
+          gh release create $env:TAG dist/* --title "HwPulse $env:VERSION" --notes-file notes.md --target $env:GITHUB_SHA

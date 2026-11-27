@@ -35,7 +35,11 @@ bin\Debug\net10.0-windows\HwPulse.exe --no-elevate --render <dir>
   ```
   - Release builds require admin (`app.manifest`).
   - To measure performance without UAC, add `-p:ApplicationManifest=app.dev.manifest`.
-- **Releasing:** bump `<Version>` in `HwPulse.csproj`, commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`. Actions publishes three files: `HwPulse.exe`, `HwPulse.exe.sha256`, `HwPulse-X.Y.Z-win-x64.zip`.
+- **Releasing:**
+  1. **Write the version's section in `CHANGELOG.md`** (`## [X.Y.Z] - date`, English + Spanish). The workflow publishes that section as the release notes, followed by bilingual install text, the SHA-256 and a compare link. If the section is missing it warns and publishes only the install text. The owner explicitly wants detailed release notes.
+  2. Bump `<Version>` in `HwPulse.csproj`.
+  3. Commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`.
+  - The 0.1.7 notes were rewritten after publishing with `gh release edit v0.1.7 --notes-file`. Actions publishes three files: `HwPulse.exe`, `HwPulse.exe.sha256`, `HwPulse-X.Y.Z-win-x64.zip`.
 - **Performance at 0.1.1 (before the pass), measured over 60 s:** window open ~0.64% CPU; tray with overlay+web on ~0.63%; tray with both off ~0.34%; **106–150 MB private, stable**. Re-measure after the pass — expected gains: no TraceEvent/ETW at all when unused, far less per-second garbage, but ICU/WinForms are still loaded (see backlog A1).
 
 ---
