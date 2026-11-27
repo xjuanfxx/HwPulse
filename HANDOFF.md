@@ -1,6 +1,6 @@
 # HwPulse: handoff notes
 
-Status snapshot so another developer or AI agent can pick up the work. Last updated 2026-11-27, release 0.1.6 (AMD CPU sensor names, NVML GPU power fallback, honest total power, targeted PawnIO upgrade, better diagnostics; 0.1.5: PawnIO real-driver check, auto-start and diagnostics; 0.1.4: PawnIO auto-install; 0.1.3: in-window update notice; 0.1.2: backlog items C5, C6, C8, C9, B5, B6 and the close-dialog centering fix, on top of the 2026-11-26 optimization pass).
+Status snapshot so another developer or AI agent can pick up the work. Last updated 2026-11-27, release 0.1.7 (visual overlay editor, Vulkan/OpenGL FPS, generic CPU cores, Windows built-in fallbacks, web keep-screen-on; 0.1.6: AMD CPU sensor names, NVML GPU power fallback, honest total power, targeted PawnIO upgrade, better diagnostics; 0.1.5: PawnIO real-driver check, auto-start and diagnostics; 0.1.4: PawnIO auto-install; 0.1.3: in-window update notice; 0.1.2: backlog items C5, C6, C8, C9, B5, B6 and the close-dialog centering fix, on top of the 2026-11-26 optimization pass).
 
 ## What it is
 HwPulse is a Windows hardware monitor.
@@ -28,7 +28,7 @@ dotnet build -c Debug          # Debug build: asInvoker manifest, no UAC prompt
 bin\Debug\net10.0-windows\HwPulse.exe --no-elevate --render <dir>
 ```
 - **`--render <dir>`:** renders every page to PNG and writes `en-fit.txt`/`es-fit.txt`. Every page except Sensors must say `OK` (no scrolling). Expect **32 files** (30 PNG + `en-fit.txt` + `es-fit.txt`) and the process must **exit on its own**. If a PNG is missing, something measured 0 (see gotcha 5). Works even with the overlay hidden (`OverlayVisible: false` in `%AppData%\HwPulse\settings.json`).
-- **Other dev flags:** `--editor` and `--move-mode` (DEBUG), `--native-probe <file>`, `--fps-probe <file>`, `--selftest-cpu <file>`, `--fake-update <ver>`, `--fake-pawnio <state>`, `--timing`, `--bench <file>`, `--dump <file>`, `--font "<name>"`, `--minimized`, `--no-elevate`, `--updated` (used internally after a self-update).
+- **Other dev flags:** `--editor`, `--move-mode`, `--editor-selftest <file>` (DEBUG), `--native-probe <file>`, `--fps-probe <file>`, `--selftest-cpu <file>`, `--fake-update <ver>`, `--fake-pawnio <state>`, `--timing`, `--bench <file>`, `--dump <file>`, `--font "<name>"`, `--minimized`, `--no-elevate`, `--updated` (used internally after a self-update).
 - **Release build:**
   ```powershell
   dotnet publish -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:PublishReadyToRun=true -o publish
@@ -115,6 +115,13 @@ A full audit (architecture, leaks, RAM, threads) drove three rounds of changes. 
       - **Gotcha:** the editor opens with `ShowDialog()`, which disables every other window of the app, overlay included. `SetMoveMode(true)` therefore also calls `Native.EnableWindow(hwnd, true)`; without it the overlay never got the click. That was the bug the owner reported.
       - **Verified without moving the mouse:** the DEBUG flag `--move-mode` (together with `--editor`) turns the mode on after 4 s, and an external check read the overlay as enabled=True and WS_EX_TRANSPARENT=False.
       - **Lesson:** never run synthetic mouse tests on the owner's PC. They hit the real desktop when the target window isn't in front.
+- **Editor round 3:**
+  - **"Default position" button** (Behavior section): `SetCorner(TopCenter)`.
+  - **Undo/redo now covers the overlay position too.** Each history step stores the layout JSON plus `#POS:corner;x;y`. `MainViewModel.PositionChanged` (raised by `SetCorner`, which is used by drag, button and hotkey) records a step; `_restoring` prevents feedback loops.
+  - **"Cancel" header button:** restores the state from when the editor opened (design, position and `OverlayOnlyInGame`), then closes.
+  - **Verified without mouse input** by the DEBUG `--editor-selftest <file>`: move → undo → redo → default position → undo reset → design change → cancel, **8/8 PASS**.
+  - Spanish data names were shortened ("Temp. CPU") and the bold column widened so headers don't truncate.
+  - **Lesson:** screenshots and SetForegroundWindow on the owner's PC catch whatever is in front (they were playing Minecraft). Use `--render` (offscreen RenderTargetBitmap) to check UI instead.
 - **Web dashboard "keep screen on" toggle** (sun icon in the header, remembered in localStorage `hwpAwake`, on by default): it uses the Wake Lock API when the page is a secure context (localhost or https). Otherwise, for example a phone on `http://192.168.x.x` where the API doesn't exist, it falls back to a muted 2×2 `<video>` playing a `canvas.captureStream(1)` that redraws every second. It re-acquires on `visibilitychange` and on the first tap. Buttons use `-webkit-tap-highlight-color: transparent` (the owner saw a borderless box flash on tap) and a focus-visible outline instead of the default focus box. Verified in the built-in browser: toggling works, no console errors, and the fallback video plays. **Not verified on real phones**; the fallback is best-effort, and iOS may still sleep over plain http.
 - **Fully customizable overlay (visual editor)**, requested by the owner, who chose the "visual editor" option.
   - **New overlay style "Custom"** (`AppSettings.OverlayStyle = "custom"`), alongside Panel and Single line. It's selectable in Settings → Overlay; in Custom, the "Customize colors" button and the "Show in overlay" checkboxes are replaced by **"Edit design…"**.

@@ -101,6 +101,9 @@
         <DockPanel Margin="20,0,12,0">
             <Button DockPanel.Dock="Right" Style="{StaticResource SmallButton}" Click="Done_Click" VerticalAlignment="Center" Margin="8,0,0,0"
                     WindowChrome.IsHitTestVisibleInChrome="True" Content="{Binding [Done], Source={x:Static local:Loc.I}}"/>
+            <Button DockPanel.Dock="Right" Style="{StaticResource SmallButton}" Click="Cancel_Click" VerticalAlignment="Center" Margin="8,0,0,0"
+                    WindowChrome.IsHitTestVisibleInChrome="True" Content="{Binding [Cancel], Source={x:Static local:Loc.I}}"
+                    ToolTip="{Binding [OvCancelTip], Source={x:Static local:Loc.I}}"/>
             <Button DockPanel.Dock="Right" Style="{StaticResource SmallButton}" Click="Export_Click" VerticalAlignment="Center" Margin="8,0,0,0"
                     WindowChrome.IsHitTestVisibleInChrome="True" Content="{Binding [OvExport], Source={x:Static local:Loc.I}}"/>
             <Button DockPanel.Dock="Right" Style="{StaticResource SmallButton}" Click="Import_Click" VerticalAlignment="Center" Margin="8,0,0,0"

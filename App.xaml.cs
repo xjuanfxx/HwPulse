@@ -189,6 +189,18 @@ public partial class App : Application
 #if DEBUG
         // --editor (solo desarrollo): abre el editor del overlay al arrancar, para revisarlo en vivo.
         if (args.Contains("--editor")) Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, OpenOverlayEditor);
+        // --editor-selftest <archivo> (solo desarrollo): prueba deshacer/posición/cancelar del editor sin ratón.
+        int edTestIdx = Array.IndexOf(args, "--editor-selftest");
+        if (edTestIdx >= 0 && edTestIdx + 1 < args.Length)
+            Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, () =>
+            {
+                if (!_vm.OverlayCustom) _vm.OverlayCustom = true;
+                var ed = new OverlayEditorWindow(_vm) { Owner = _main };
+                ed.Show();
+                File.WriteAllText(args[edTestIdx + 1], ed.SelfTest());
+                ed.Close();
+                ExitApp();
+            });
         // --move-mode (solo desarrollo): activa "mover con el ratón" poco después de abrir el editor, para comprobarlo.
         if (args.Contains("--move-mode"))
             new DispatcherTimer(TimeSpan.FromSeconds(4), DispatcherPriority.Normal, (t, _) => { ((DispatcherTimer)t!).Stop(); SetOverlayMoveMode(true); }, Dispatcher).Start();

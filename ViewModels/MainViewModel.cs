@@ -256,9 +256,16 @@ public sealed partial class MainViewModel : Observable
     /// <summary>Posición libre (colocada con el ratón desde el editor): ningún botón de esquina queda marcado.</summary>
     public Visibility CornerCustomVisibility => _settings.Corner == OverlayCorner.Custom ? Visibility.Visible : Visibility.Collapsed;
 
+    public OverlayCorner Corner => _settings.Corner;
+    public double OverlayX => _settings.OverlayX;
+    public double OverlayY => _settings.OverlayY;
+    /// <summary>La posición del overlay cambió (botón, atajo o arrastre): el editor lo apunta en su historial.</summary>
+    public event Action? PositionChanged;
+
     public void SetCorner(OverlayCorner c)
     {
         _settings.Corner = c;
+        PositionChanged?.Invoke();
         Raise(nameof(CornerTC)); Raise(nameof(CornerTL)); Raise(nameof(CornerTR)); Raise(nameof(CornerBL)); Raise(nameof(CornerBR));
         Raise(nameof(CornerBC)); Raise(nameof(CornerCustomVisibility));
         OverlayLayoutChanged?.Invoke();

@@ -22,7 +22,7 @@ public partial class OverlayEditorWindow : Window
     private bool _building, _moveMode;
 
     // Columnas de la lista de elementos: arrastrar · subir/bajar · visible · nombre · etiqueta · color valor · color etiqueta · tamaño · negrita · barra · gráfica
-    private static readonly double[] Cols = { 18, 50, 46, 0, 84, 34, 34, 52, 34, 34, 34 };
+    private static readonly double[] Cols = { 18, 50, 46, 0, 84, 34, 34, 52, 48, 34, 34 };
 
     public OverlayEditorWindow(MainViewModel vm)
     {
@@ -35,7 +35,9 @@ public partial class OverlayEditorWindow : Window
         BuildStyle();
         BuildElements();
         RefreshPreview();
-        _current = _layout.ToJson();
+        _current = _initial = StateKey();
+        _initialOnlyInGame = vm.OverlayOnlyInGame;
+        vm.PositionChanged += OnPositionChanged;
         UpdateUndoButtons();
         KeyDown += (_, e) =>
         {
@@ -48,7 +50,11 @@ public partial class OverlayEditorWindow : Window
             }
         };
         // Al cerrar el editor, el overlay vuelve a dejar pasar los clics
-        Closed += (_, _) => ((App)Application.Current).SetOverlayMoveMode(false);
+        Closed += (_, _) =>
+        {
+            _vm.PositionChanged -= OnPositionChanged;
+            ((App)Application.Current).SetOverlayMoveMode(false);
+        };
     }
 
     protected override void OnSourceInitialized(EventArgs e)
@@ -67,15 +73,30 @@ public partial class OverlayEditorWindow : Window
     }
 
     // ------------------------------------------------------------------ deshacer / rehacer
-    // Historial de estados completos (JSON). Los cambios seguidos de un mismo gesto (arrastrar un slider,
-    // escribir una etiqueta) se agrupan en un solo paso si llegan con menos de 600 ms de diferencia.
+    // Historial de estados completos: el diseño (JSON) + la posición del overlay. Los cambios seguidos de un
+    // mismo gesto (arrastrar un slider, escribir una etiqueta) se agrupan en un solo paso si llegan con menos
+    // de 600 ms de diferencia. "Cancelar" vuelve al estado con el que se abrió el editor.
     private readonly List<string> _undo = new(), _redo = new();
-    private string _current = "";
+    private string _current = "", _initial = "";
+    private bool _initialOnlyInGame, _restoring;
     private DateTime _lastRecord = DateTime.MinValue;
+    private const string PosMark = "\n#POS:";
+
+    private string StateKey() =>
+        _layout.ToJson() + PosMark + string.Join(";", (int)_vm.Corner,
+            _vm.OverlayX.ToString("R", CultureInfo.InvariantCulture), _vm.OverlayY.ToString("R", CultureInfo.InvariantCulture));
+
+    /// <summary>El overlay se movió (arrastre, botón de posición por defecto…): un paso más en el historial.</summary>
+    private void OnPositionChanged()
+    {
+        if (_restoring) return;
+        _lastRecord = DateTime.MinValue; // cada movimiento es su propio paso
+        RecordHistory();
+    }
 
     private void RecordHistory()
     {
-        string json = _layout.ToJson();
+        string json = StateKey();
         if (json == _current) return;
         if (_current.Length > 0 && (DateTime.UtcNow - _lastRecord).TotalMilliseconds > 600)
         {
@@ -88,17 +109,43 @@ public partial class OverlayEditorWindow : Window
         UpdateUndoButtons();
     }
 
-    private void Restore(string json)
+    private void Restore(string state)
     {
+        int cut = state.IndexOf(PosMark, StringComparison.Ordinal);
+        string json = cut >= 0 ? state[..cut] : state;
         if (OverlayLayout.FromJson(json) is not { } l) return;
-        _layout = l;
-        _current = json;
-        _lastRecord = DateTime.MinValue; // el siguiente cambio abre un paso nuevo
-        BuildStyle();
-        BuildElements();
-        RefreshPreview();
-        _vm.SetCustomLayout(_layout.Clone());
+        _restoring = true;
+        try
+        {
+            _layout = l;
+            _current = state;
+            _lastRecord = DateTime.MinValue; // el siguiente cambio abre un paso nuevo
+            BuildStyle();
+            BuildElements();
+            RefreshPreview();
+            _vm.SetCustomLayout(_layout.Clone());
+            // Posición guardada en ese paso
+            if (cut >= 0 && state[(cut + PosMark.Length)..].Split(';') is [var c, var x, var y]
+                && int.TryParse(c, out int corner) && Enum.IsDefined((OverlayCorner)corner))
+            {
+                if ((OverlayCorner)corner == OverlayCorner.Custom
+                    && double.TryParse(x, NumberStyles.Float, CultureInfo.InvariantCulture, out var px)
+                    && double.TryParse(y, NumberStyles.Float, CultureInfo.InvariantCulture, out var py))
+                    _vm.SetCustomPosition(px, py);
+                else _vm.SetCorner((OverlayCorner)corner);
+            }
+            _current = StateKey();
+        }
+        finally { _restoring = false; }
         UpdateUndoButtons();
+    }
+
+    /// <summary>Cancelar: deshace todo lo hecho desde que se abrió el editor (diseño, posición y "solo en juegos").</summary>
+    private void Cancel_Click(object sender, RoutedEventArgs e)
+    {
+        Restore(_initial);
+        _vm.OverlayOnlyInGame = _initialOnlyInGame;
+        Close();
     }
 
     private void Undo_Click(object sender, RoutedEventArgs e)
@@ -137,7 +184,13 @@ public partial class OverlayEditorWindow : Window
                                          HorizontalAlignment = HorizontalAlignment.Left, ToolTip = Loc.T("OvMoveMouseTip") };
         moveBtn.Checked += (_, _) => { _moveMode = true; ((App)Application.Current).SetOverlayMoveMode(true); };
         moveBtn.Unchecked += (_, _) => { _moveMode = false; ((App)Application.Current).SetOverlayMoveMode(false); };
-        StylePanel.Children.Add(moveBtn);
+        var resetPos = new Button { Style = (Style)FindResource("SmallButton"), Content = Loc.T("OvResetPosition"), Margin = new Thickness(8, 0, 0, 0),
+                                    ToolTip = Loc.T("OvResetPositionTip"), VerticalAlignment = VerticalAlignment.Center };
+        resetPos.Click += (_, _) => _vm.SetCorner(OverlayCorner.TopCenter);
+        var posRow = new StackPanel { Orientation = Orientation.Horizontal };
+        posRow.Children.Add(moveBtn);
+        posRow.Children.Add(resetPos);
+        StylePanel.Children.Add(posRow);
         StylePanel.Children.Add(new TextBlock { Text = Loc.T("OvMoveMouseHint"), Style = (Style)FindResource("Hint"),
                                                 Margin = new Thickness(0, 6, 0, 0), TextWrapping = TextWrapping.Wrap });
         var onlyGame = new CheckBox { Style = (Style)FindResource("Switch"), IsChecked = _vm.OverlayOnlyInGame, VerticalAlignment = VerticalAlignment.Center };
@@ -583,4 +636,35 @@ public partial class OverlayEditorWindow : Window
     }
 
     private void Done_Click(object sender, RoutedEventArgs e) => Close();
+
+#if DEBUG
+    // ------------------------------------------------------------------ prueba automática (--editor-selftest)
+    /// <summary>Recorre mover → deshacer → rehacer → posición por defecto → cambiar diseño → cancelar, sin ratón,
+    /// y devuelve un informe con el resultado de cada paso.</summary>
+    internal string SelfTest()
+    {
+        var log = new System.Text.StringBuilder();
+        void Check(string step, bool ok, string detail) => log.AppendLine($"{(ok ? "PASS" : "FAIL")}  {step,-34} {detail}");
+        string Pos() => _vm.Corner == OverlayCorner.Custom ? $"Custom({_vm.OverlayX:0.00},{_vm.OverlayY:0.00})" : _vm.Corner.ToString();
+        var startCorner = _vm.Corner; double startSpacing = _layout.Spacing;
+
+        _vm.SetCustomPosition(0.5, 0.4);
+        Check("move overlay (like a drag)", _vm.Corner == OverlayCorner.Custom && UndoBtn.IsEnabled, Pos());
+        Undo_Click(this, new RoutedEventArgs());
+        Check("undo restores position", _vm.Corner == startCorner, Pos());
+        Redo_Click(this, new RoutedEventArgs());
+        Check("redo moves it again", _vm.Corner == OverlayCorner.Custom && Math.Abs(_vm.OverlayX - 0.5) < 1e-9, Pos());
+        _vm.SetCorner(OverlayCorner.TopCenter); // botón "Posición por defecto"
+        Check("default position button", _vm.Corner == OverlayCorner.TopCenter, Pos());
+        Undo_Click(this, new RoutedEventArgs());
+        Check("undo the reset", _vm.Corner == OverlayCorner.Custom, Pos());
+        _lastRecord = DateTime.MinValue;
+        _layout.Spacing = startSpacing + 7; Changed();
+        Check("design change applied", Math.Abs(_vm.CustomLayout.Spacing - (startSpacing + 7)) < 1e-9, $"spacing {_vm.CustomLayout.Spacing}");
+        Restore(_initial);
+        Check("cancel restores design", Math.Abs(_vm.CustomLayout.Spacing - startSpacing) < 1e-9, $"spacing {_vm.CustomLayout.Spacing}");
+        Check("cancel restores position", _vm.Corner == startCorner, Pos());
+        return log.ToString();
+    }
+#endif
 }
